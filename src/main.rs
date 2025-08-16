@@ -2,11 +2,20 @@ use std::fs::OpenOptions;
 use std::os::safaos::AsRawResource;
 use std::os::safaos::IoUtils;
 use std::process::Command;
+use std::process::Stdio;
 use std::slice::from_raw_parts;
+use std::usize;
 
 use safa_api::abi::mem::MemMapFlags;
+use safa_api::sockets::SockKind;
 use safa_api::sockets::UnixListener;
 use safa_api::sockets::UnixListenerBuilder;
+use safa_api::sockets::UnixSockConnection;
+
+use crate::com::listener;
+use crate::logging::disable_terminal_logging;
+mod com;
+mod logging;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -23,7 +32,8 @@ pub struct FramebufferDevInfo {
 const CMD_RECEIVE_FB_INFO: u16 = 1;
 
 fn main() {
-    println!("Hello, world!");
+    log!("WM Starting");
+
     let fb_file = OpenOptions::new()
         .write(true)
         .open("dev:/fb")
@@ -37,7 +47,7 @@ fn main() {
     assert!(fb_info.bpp == size_of::<u32>() * 8);
     assert!(!fb_info.bgr);
 
-    println!("FBInfo is {fb_info:?}");
+    dlog!("Got Framebuffer: {fb_info:#?}");
     let pixels_required = fb_info.height * fb_info.width;
     let bytes_required = (fb_info.bpp / 8) * pixels_required;
 
@@ -51,11 +61,19 @@ fn main() {
         MemMapFlags::WRITE,
     )
     .expect("Failed to SysMemMap the Framebuffer");
-    println!("Mapped FB to {:?}", bytes.as_ptr());
-    // So this is static
+
+    // So this is static because the mapping lives as long as the process
+    // As long as we don't destroy it
     let pixels: &'static mut [u32] =
         unsafe { std::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u32, pixels_required) };
     pixels.fill(0xFFFFFFFF);
-    println!("filled {}KiB pixels\n", (pixels.len() * 4) / 1024);
+
+    log!(
+        "Cleared screen, {}KiB worth of pixels",
+        (pixels.len() * 4) / 1024
+    );
+    disable_terminal_logging();
+
     safa_api::syscalls::io::sync(fb_ri).expect("failed to sync the FB");
+    listener::listen()
 }
