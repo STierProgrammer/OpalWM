@@ -11,6 +11,9 @@ use thiserror::Error;
 pub mod listener;
 
 /// A Wrapper over a bi-directonal communication pipe, that can send data to and from the client
+///
+/// This pipe works with the assumption that a single writer which is also a reader will happen to use it,
+/// And therefore isn't wrapped in any locks
 pub struct ClientComPipe(UnixSockConnection);
 
 /// An Error that happened during reading a request from a Client

@@ -1,16 +1,9 @@
 use std::fs::OpenOptions;
 use std::os::safaos::AsRawResource;
 use std::os::safaos::IoUtils;
-use std::process::Command;
-use std::process::Stdio;
-use std::slice::from_raw_parts;
 use std::usize;
 
 use safa_api::abi::mem::MemMapFlags;
-use safa_api::sockets::SockKind;
-use safa_api::sockets::UnixListener;
-use safa_api::sockets::UnixListenerBuilder;
-use safa_api::sockets::UnixSockConnection;
 
 use crate::com::listener;
 use crate::logging::disable_terminal_logging;

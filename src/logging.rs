@@ -71,3 +71,9 @@ macro_rules! log {
 macro_rules! dlog {
     ($($arg: tt)*) => ($crate::generic_log!("[  \x1b[91mDebug\x1b[0m  ]\x1b[90m:\x1b[0m {}", format_args!($($arg)*)));
 }
+
+/// Log a non fatal error (perhaps will only affect a single client)
+#[macro_export]
+macro_rules! elog {
+    ($($arg: tt)*) => ($crate::generic_log!("[  \x1b[31mError\x1b[0m  ]\x1b[90m:\x1b[0m {}", format_args!($($arg)*)));
+}

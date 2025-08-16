@@ -1,14 +1,17 @@
-use std::process::{Command, Stdio};
+use std::{
+    io::ErrorKind,
+    process::{Command, Stdio},
+};
 
 use opal_abi::com::{
-    request::{Ping, Request, RequestParseErr},
+    request::{Ping, Request},
     response::{OkResponse, ResponseError},
 };
 use safa_api::sockets::{SockKind, UnixListenerBuilder, UnixSockConnection};
 
 use crate::{
     com::{ClientComPipe, ReadError},
-    dlog, log, logging,
+    dlog, elog, log, logging,
 };
 
 fn spawn_hello() {
@@ -25,7 +28,7 @@ fn handle_connect(connection: UnixSockConnection) {
     let pipe = ClientComPipe::new(connection);
 
     loop {
-        dlog!("Waiting for Request");
+        dlog!("Waiting for a Request");
 
         let response = match pipe.read_request() {
             Ok(req) => match req {
@@ -33,21 +36,21 @@ fn handle_connect(connection: UnixSockConnection) {
                 Request::Ping(Ping) => Ok(OkResponse::Success),
             },
             Err(read_error) => match read_error {
-                ReadError::ParseErr(parse) => match parse {
-                    RequestParseErr::InvalidMagic => Err(ResponseError::InvalidMagic),
-                    RequestParseErr::InvalidPacketSize => Err(ResponseError::PacketTooShort),
-                    RequestParseErr::InvalidRequestKind => Err(ResponseError::InvalidRequestKind),
-                },
+                ReadError::ParseErr(e) => Err(ResponseError::from(e)),
+                ReadError::IOError(e) if e.kind() == ErrorKind::ConnectionAborted => {
+                    dlog!("One client disconnected successfully");
+                    break;
+                }
                 ReadError::IOError(e) => {
-                    dlog!("Error reading from socket '{e}', disconnecting...");
+                    elog!("Error reading from socket '{e}', disconnecting...");
                     break;
                 }
             },
         };
 
-        dlog!("Writing Response");
+        dlog!("Writing a Response");
         if let Err(e) = pipe.write_response(response) {
-            dlog!("Error writing to socket '{e}', disconnecting...");
+            elog!("Error writing to socket '{e}', disconnecting...");
             break;
         }
     }

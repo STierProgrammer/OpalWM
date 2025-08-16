@@ -1,7 +1,7 @@
 use zerocopy::{IntoBytes, TryFromBytes};
 use zerocopy_derive::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
-use crate::com::MAX_PACKET_SIZE;
+use crate::com::{MAX_PACKET_SIZE, request::RequestParseErr};
 
 const RESPONSE_OK_MAGIC: u32 = 0xBC_F00D_AD;
 const RESPONSE_ERR_MAGIC: u32 = 0xBC_DEAD_AD;
@@ -16,6 +16,16 @@ pub enum ResponseError {
     InvalidRequestKind,
     PacketTooShort,
     InvalidData,
+}
+
+impl From<RequestParseErr> for ResponseError {
+    fn from(value: RequestParseErr) -> Self {
+        match value {
+            RequestParseErr::InvalidMagic => ResponseError::InvalidMagic,
+            RequestParseErr::InvalidPacketSize => ResponseError::PacketTooShort,
+            RequestParseErr::InvalidRequestKind => ResponseError::InvalidRequestKind,
+        }
+    }
 }
 
 /// Represents a Raw Ok Response kind, should be converted to an [`OkResponse`]
