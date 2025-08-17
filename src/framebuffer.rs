@@ -69,12 +69,12 @@ static FRAMEBUFFER_MEMMAP: LazyLock<(FramebufferDevInfo, Ri, (usize, usize))> =
 
         dlog!("Got Framebuffer: {fb_info:#?}");
         let pixels_required = fb_info.height * fb_info.width;
-        let bytes_required = (fb_info.bpp / 8) * pixels_required;
+        let bytes_required = pixels_required * size_of::<Pixel>();
 
         // The Mapping should live as long as the Process
         let (fb_ri, bytes) = safa_api::syscalls::mem::map(
             core::ptr::null(),
-            bytes_required / 4096,
+            bytes_required.div_ceil(4096),
             0,
             Some(fb_file.as_raw_resource()),
             None,
@@ -97,7 +97,7 @@ pub static FB_INFO: LazyLock<FramebufferDevInfo> = LazyLock::new(|| {
 
 static FRAMEBUFFER: LazyLock<Mutex<Framebuffer>> = LazyLock::new(|| {
     let (dev, mmap_ri, (pixels_bytes_addr, bytes_len)) = &*FRAMEBUFFER_MEMMAP;
-    let pixels_count = bytes_len / size_of::<Pixel>();
+    let pixels_count = dev.width * dev.height;
     let pixels =
         unsafe { std::slice::from_raw_parts_mut(*pixels_bytes_addr as *mut Pixel, pixels_count) };
     Mutex::new(Framebuffer {
