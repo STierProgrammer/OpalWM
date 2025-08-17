@@ -140,6 +140,10 @@ impl Windows {
             max_y - win.height,
         );
 
+        if win.pos_x == damage0.pos_x && win.pos_y == damage0.pos_y {
+            return;
+        }
+
         let damage1 = win.damage();
 
         dlog!(
