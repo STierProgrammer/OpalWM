@@ -1,7 +1,13 @@
+use crate::bmp::BMPImage;
 use crate::com::listener;
 use crate::framebuffer::Pixel;
 use crate::logging::disable_terminal_logging;
 use crate::window::{WINDOWS, Window};
+
+/// Set to true if you want really verbose slow information
+///
+/// TODO: make this a cmd line arg or perhaps a feature
+const REALLY_VERBOSE: bool = false;
 
 mod bmp;
 mod com;

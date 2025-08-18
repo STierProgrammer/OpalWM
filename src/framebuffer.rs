@@ -34,6 +34,31 @@ impl Pixel {
     pub const fn from_hex(rgb: u32) -> Self {
         unsafe { core::mem::transmute(rgb) }
     }
+
+    /// Alpha blends a pixel with another
+    pub const fn blend(&self, other: &Self) -> Self {
+        let src_red = self.red as u16;
+        let target_red = other.red as u16;
+
+        let src_green = self.green as u16;
+        let target_green = other.green as u16;
+
+        let src_blue = self.blue as u16;
+        let target_blue = other.blue as u16;
+
+        let alpha = self.alpha as u16;
+
+        let red = (src_red * alpha + (target_red * (255 - alpha))) / 255;
+        let green = (src_green * alpha + (target_green * (255 - alpha))) / 255;
+        let blue = (src_blue * alpha + (target_blue * (255 - alpha))) / 255;
+
+        Pixel {
+            red: red as u8,
+            green: green as u8,
+            blue: blue as u8,
+            alpha: self.alpha,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +142,12 @@ static FRAMEBUFFER: LazyLock<Mutex<Framebuffer>> = LazyLock::new(|| {
 
 impl Framebuffer {
     /// Draws a rectangle with the given pixels
+    /// # Arguments
+    /// - `off_x`: top-left X offset within the framebuffer.
+    /// - `off_y`: top-right Y offset within the framebuffer.
+    /// - `width`: amount of pixels to draw per row.
+    /// - `height`: amount of rows to draw
+    /// - `pixels: the pixels to draw, must be at least `width` * `height` long
     pub fn draw_rect(
         &mut self,
         off_x: usize,
@@ -138,32 +169,59 @@ impl Framebuffer {
 
             /* we want to blend the target and the src pixels together */
             for (target_pixel, src_pixel) in target_pixels.iter_mut().zip(src_pixels.iter()) {
-                let result_pixel = {
-                    let src_red = src_pixel.red as u16;
-                    let target_red = target_pixel.red as u16;
+                *target_pixel = src_pixel.blend(target_pixel);
+            }
+        }
+    }
 
-                    let src_green = src_pixel.green as u16;
-                    let target_green = target_pixel.green as u16;
+    /// Similar to [`Self::draw_rect`] but it also takes a position with the pixels to draw
+    /// # Arguments
+    /// Same as [`Self::draw_rect`] with the additional arguments:
+    /// - `pixels_width`: The total width of the given pixels rectangale.
+    /// - `pixels_height`: The total height of the given pixels rectangle.
+    /// - `pixel_rel_x`: The relative X offset within the rectangle in which we start to draw.
+    /// - `pixel_rel_y`: The relative Y offset within the rectangle in which we start to draw.
+    ///
+    /// We will draw to the framebuffer starting from (`off_x`, `off_y`),
+    /// BUT the pixels will start from (`pixel_rel_x`, `pixel_rel_y`) and both these offsets will
+    /// be relative to the given rectangale.
+    pub fn draw_rect_within(
+        &mut self,
+        off_x: usize,
+        off_y: usize,
+        width: usize,
+        height: usize,
+        pixels: &[Pixel],
+        pixels_width: usize,
+        pixels_height: usize,
+        pixel_rel_x: usize,
+        pixel_rel_y: usize,
+    ) {
+        assert!(
+            (pixels_width - pixel_rel_x) >= width,
+            "The given pixels rectangle must have width greater than or equal to the requested draw width"
+        );
+        assert!(
+            (pixels_height - pixel_rel_y) >= height,
+            "The given pixels rectangle must have height greater than or equal to the requested draw height"
+        );
 
-                    let src_blue = src_pixel.blue as u16;
-                    let target_blue = target_pixel.blue as u16;
+        let height = height.min(self.height - off_y);
+        let width = width.min(self.width - off_x);
 
-                    let alpha = src_pixel.alpha as u16;
+        for row in 0..height {
+            let target_row_index = off_x + ((off_y + row) * self.width);
+            let src_row_index = pixel_rel_x + ((pixel_rel_y + row) * pixels_width);
 
-                    let red = (src_red * alpha + (target_red * (255 - alpha))) / 255;
-                    let green = (src_green * alpha + (target_green * (255 - alpha))) / 255;
-                    let blue = (src_blue * alpha + (target_blue * (255 - alpha))) / 255;
+            let end_target_row_index = (target_row_index + width).min(self.pixels.len());
+            let end_src_row_index = (src_row_index + width).min(pixels.len());
 
-                    let result_alpha = src_pixel.alpha.max(target_pixel.alpha);
-                    Pixel {
-                        red: red as u8,
-                        green: green as u8,
-                        blue: blue as u8,
-                        alpha: result_alpha,
-                    }
-                };
+            let target_pixels = &mut self.pixels[target_row_index..(target_row_index + width)];
+            let src_pixels = &pixels[src_row_index..(src_row_index + width)];
 
-                *target_pixel = result_pixel;
+            /* we want to blend the target and the src pixels together */
+            for (target_pixel, src_pixel) in target_pixels.iter_mut().zip(src_pixels.iter()) {
+                *target_pixel = src_pixel.blend(target_pixel);
             }
         }
     }
