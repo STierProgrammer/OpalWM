@@ -216,8 +216,8 @@ impl Framebuffer {
             let end_target_row_index = (target_row_index + width).min(self.pixels.len());
             let end_src_row_index = (src_row_index + width).min(pixels.len());
 
-            let target_pixels = &mut self.pixels[target_row_index..(target_row_index + width)];
-            let src_pixels = &pixels[src_row_index..(src_row_index + width)];
+            let target_pixels = &mut self.pixels[target_row_index..end_target_row_index];
+            let src_pixels = &pixels[src_row_index..end_src_row_index];
 
             /* we want to blend the target and the src pixels together */
             for (target_pixel, src_pixel) in target_pixels.iter_mut().zip(src_pixels.iter()) {
