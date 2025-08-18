@@ -2,7 +2,7 @@ use crate::bmp::BMPImage;
 use crate::com::listener;
 use crate::framebuffer::Pixel;
 use crate::logging::disable_terminal_logging;
-use crate::window::{WINDOWS, Window};
+use crate::window::{WINDOWS, Window, WindowKind};
 
 /// Set to true if you want really verbose slow information
 ///
@@ -22,20 +22,14 @@ fn main() {
     framebuffer::clear();
     {
         let mut w = WINDOWS.lock().expect("failed to get lock on windows");
-        w.add_window(Window::new_filled_with(
-            213,
-            442,
-            200,
-            200,
-            Pixel::from_rgba(0, 0xFF, 0, 0xFF),
-        ));
-        w.add_window(Window::new_filled_with(
-            270,
-            400,
-            200,
-            200,
-            Pixel::from_rgba(0xFF, 0, 0, 0xFF / 2),
-        ));
+        w.add_window(
+            Window::new_filled_with(213, 442, 200, 200, Pixel::from_rgba(0, 0xFF, 0, 0xFF)),
+            WindowKind::Normal,
+        );
+        w.add_window(
+            Window::new_filled_with(270, 400, 200, 200, Pixel::from_rgba(0xFF, 0, 0, 0xFF / 2)),
+            WindowKind::Normal,
+        );
         w.damage_redraw();
     }
     std::thread::spawn(mice::mice_poll);

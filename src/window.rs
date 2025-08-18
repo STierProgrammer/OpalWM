@@ -1,4 +1,7 @@
-use std::{iter::Sum, ops::Add, sync::Mutex};
+use std::{collections::HashMap, iter::Sum, ops::Add, sync::Mutex};
+
+use indexmap::IndexSet;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 
 use crate::{
     REALLY_VERBOSE,
@@ -202,6 +205,7 @@ struct DamageRegion {
 }
 
 impl DamageRegion {
+    #[inline]
     /// Checks if self overlaps with `win` returning the point which is covered from the window
     pub fn overlaps_with(&self, win: &Window) -> Option<IntersectionPoint> {
         let d_x0 = self.pos_x;
@@ -230,19 +234,87 @@ impl DamageRegion {
     }
 }
 
+const MAX_WINDOW_ID: usize = 1024 /* TODO: more windows? */;
+/// A window ID
+pub type WinID = u16;
+
+/// The type of the Window, defines the ordering which a Window may come over another, for example the cursor uses [`WindowKind::Overlay`]
+#[derive(Debug, Clone, Copy)]
+pub enum WindowKind {
+    /// Always displayed above all other windows
+    Overlay,
+    /// Normal ordering
+    Normal,
+}
+
 pub struct Windows {
-    windows: Vec<Window>,
+    windows: FxHashMap<WinID, (Window, WindowKind)>,
+    /// Windows that always come on top of other windows
+    overlay_windows: IndexSet<WinID, FxBuildHasher>,
+    /// The ordering of the windows in the Z Axis, the focused Window comes last
+    normal_windows: IndexSet<WinID, FxBuildHasher>,
+
+    /// A list of window IDs
+    /// currently stored using a Bitmap and the max is 1024
+    window_ids: [u128; 8],
+    focused_window: Option<WinID>,
+
     damage_regions: Vec<DamageRegion>,
 }
 
 impl Windows {
     pub const fn new() -> Self {
         Self {
+            overlay_windows: IndexSet::with_hasher(FxBuildHasher),
+            normal_windows: IndexSet::with_hasher(FxBuildHasher),
+            focused_window: None,
+
             damage_regions: Vec::new(),
-            windows: Vec::new(),
+            windows: HashMap::with_hasher(FxBuildHasher),
+            window_ids: [0; 8],
         }
     }
 
+    /// Allocates a new Window ID
+    fn add_id(&mut self) -> Option<WinID> {
+        for (row, byte) in self.window_ids.iter_mut().enumerate() {
+            let width = size_of_val(byte) * 8;
+
+            for col in 0..width {
+                let bit = ((*byte >> col) & 1) == 1;
+                if !bit {
+                    *byte |= 1 << col;
+                    return Some((col + (row * width)) as WinID);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Deallocate an existing Window ID
+    /// returns true if successful, false if the ID is invalid
+    fn remove_id(&mut self, id: WinID) -> bool {
+        if id as usize >= MAX_WINDOW_ID {
+            return false;
+        }
+
+        let width = size_of_val(&self.window_ids[0]);
+        let row = (id / width as u16) as usize;
+        let col = (id % width as u16) as usize;
+
+        let byte = &mut self.window_ids[row];
+        let bit = ((*byte >> col) & 1) == 1;
+        let will_succeed = !bit;
+
+        if will_succeed {
+            *byte &= !(1 << col);
+        }
+
+        will_succeed
+    }
+
+    /// Redraw the damage caused by (and apply the results of) playing around with the windows using `self`
     pub fn damage_redraw(&mut self) {
         let mut fb = framebuffer::framebuffer();
 
@@ -259,13 +331,34 @@ impl Windows {
             );
         }
 
-        for win in &self.windows {
-            let intersection: IntersectionPoint =
-                damage.iter().filter_map(|d| d.overlaps_with(win)).sum();
+        // Fixes all the damages caused on a window if any
+        macro_rules! fix_window {
+            ($win: expr) => {{
+                let win = $win;
+                let intersection: IntersectionPoint =
+                    damage.iter().filter_map(|d| d.overlaps_with(&win)).sum();
 
-            if intersection != IntersectionPoint::none() {
-                win.draw_at(&mut fb, intersection);
-            }
+                if intersection != IntersectionPoint::none() {
+                    win.draw_at(&mut fb, intersection);
+                }
+            }};
+        }
+
+        for win_id in &self.normal_windows {
+            let (window, _) = self
+                .windows
+                .get_mut(win_id)
+                .expect("Window wasn't removed from the Z-Ordering when it was removed");
+            fix_window!(window);
+        }
+
+        // Overlay on top of other windows
+        for win_id in &self.overlay_windows {
+            let (window, _) = self
+                .windows
+                .get_mut(win_id)
+                .expect("Overlay window wasn't removed from the Z-Ordering when it was removed");
+            fix_window!(window);
         }
 
         for r in damage {
@@ -273,12 +366,17 @@ impl Windows {
         }
     }
 
-    pub fn change_cord(&mut self, win_id: usize, x: i16, y: i16) {
+    /// Adds `x` to window with the ID  `win_id` x position and `y` to the window with the ID `win_id`'s Y position
+    ///
+    /// Returns the new position if the Window ID exist
+    pub fn add_cord(&mut self, win_id: WinID, x: i32, y: i32) -> Option<(usize, usize)> {
+        let (win, _) = self.windows.get_mut(&win_id)?;
+
+        /* The guarantee that this will be successful, is that we have a mutable reference on Self and that all access on the Window will be performed from Self */
         if x == 0 && y == 0 {
-            return;
+            return Some((win.pos_x, win.pos_y));
         }
 
-        let win = &mut self.windows[win_id];
         let damage0 = win.damage();
 
         let max_x = FB_INFO.width;
@@ -294,7 +392,7 @@ impl Windows {
         );
 
         if win.pos_x == damage0.pos_x && win.pos_y == damage0.pos_y {
-            return;
+            return Some((win.pos_x, win.pos_y));
         }
 
         let damage1 = win.damage();
@@ -308,16 +406,79 @@ impl Windows {
                 damage1.pos_y
             );
         }
+
+        // Faster than extend_from_slice for some reason (I checked the code they aren't reserving the additional elements)
+        self.damage_regions.reserve(2);
         self.damage_regions.push(damage0);
         self.damage_regions.push(damage1);
+        Some((damage1.pos_x, damage1.pos_y))
     }
 
-    pub fn add_window(&mut self, window: Window) -> usize {
-        let id = self.windows.len();
+    /// Adds a window and organizes it depending on `kind` (see [`WindowKind`])
+    pub fn add_window(&mut self, window: Window, kind: WindowKind) -> Option<WinID> {
         let damage = window.damage();
-        self.windows.push(window);
+
+        let id = self.add_id()?;
+        self.windows.insert(id, (window, kind));
+
+        match kind {
+            WindowKind::Normal => self.normal_windows.insert(id),
+            WindowKind::Overlay => self.overlay_windows.insert(id),
+        };
+
         self.damage_regions.push(damage);
-        id
+
+        Some(id)
+    }
+
+    /// Makes the top most [`WindowKind::Normal`] Window that contacts,
+    /// with the region at the position `pos_x`, `pos_y` with the width `width`
+    /// and the height `height`, focused, returns the Window ID, or None if there are no normal windows in contact,
+    /// If there are no normal windows on contact, a [`Self::focused_window`] call will return None after this.
+    pub fn focus_window_in_contact(
+        &mut self,
+        pos_x: usize,
+        pos_y: usize,
+        width: usize,
+        height: usize,
+    ) -> Option<WinID> {
+        let region = DamageRegion {
+            pos_x,
+            pos_y,
+            width,
+            height,
+        };
+
+        let win_id = self
+            .normal_windows
+            .iter()
+            .rev()
+            .find(|win_id| {
+                let (win, _) = self.windows.get(win_id).expect(
+                    "Window wasn't removed from the Z-ordering when it's ID was deallocated",
+                );
+                // TODO: this could be wrote better, perhaps?
+                let overlaps = region.overlaps_with(win).is_some();
+                if overlaps {
+                    self.damage_regions.push(win.damage());
+                }
+                overlaps
+            })
+            .copied();
+
+        if let Some(win_id) = win_id {
+            self.normal_windows.shift_remove(&win_id);
+            self.normal_windows.insert(win_id);
+            self.focused_window = Some(win_id);
+        } else {
+            self.focused_window = None;
+        }
+        win_id
+    }
+
+    /// Returns the ID of the focused Window
+    pub const fn focused_window(&self) -> Option<WinID> {
+        self.focused_window
     }
 }
 
