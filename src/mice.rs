@@ -10,7 +10,7 @@ use crate::{
     window::{WINDOWS, Window},
 };
 
-const CURSOR_BYTES: &[u8] = include_bytes!("../assets/beta-cursor.bmp");
+const CURSOR_BYTES: &[u8] = include_bytes!("../assets/epic-cursor.bmp");
 
 /// Polls the mouse device for incoming events and handles them
 pub fn mice_poll() -> ! {
