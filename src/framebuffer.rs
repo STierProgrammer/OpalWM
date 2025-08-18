@@ -1,7 +1,4 @@
-use std::{
-    ptr::NonNull,
-    sync::{LazyLock, Mutex, MutexGuard},
-};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use safa_api::syscalls::types::Ri;
 use std::fs::OpenOptions;
@@ -106,7 +103,7 @@ pub static FB_INFO: LazyLock<FramebufferDevInfo> = LazyLock::new(|| {
 });
 
 static FRAMEBUFFER: LazyLock<Mutex<Framebuffer>> = LazyLock::new(|| {
-    let (dev, mmap_ri, (pixels_bytes_addr, bytes_len)) = &*FRAMEBUFFER_MEMMAP;
+    let (dev, mmap_ri, (pixels_bytes_addr, _)) = &*FRAMEBUFFER_MEMMAP;
     let pixels_count = dev.width * dev.height;
     let pixels =
         unsafe { std::slice::from_raw_parts_mut(*pixels_bytes_addr as *mut Pixel, pixels_count) };
@@ -141,7 +138,7 @@ impl Framebuffer {
 
             /* we want to blend the target and the src pixels together */
             for (target_pixel, src_pixel) in target_pixels.iter_mut().zip(src_pixels.iter()) {
-                let result_pixel = unsafe {
+                let result_pixel = {
                     let src_red = src_pixel.red as u16;
                     let target_red = target_pixel.red as u16;
 

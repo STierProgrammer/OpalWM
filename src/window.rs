@@ -71,7 +71,7 @@ impl Window {
         );
     }
 
-    pub fn damage(&self) -> DamageRegion {
+    fn damage(&self) -> DamageRegion {
         DamageRegion {
             pos_x: self.pos_x,
             pos_y: self.pos_y,

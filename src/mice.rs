@@ -7,8 +7,6 @@ use safa_api::abi::input::{MiceEvent, MouseEventKind};
 
 use crate::{
     bmp::BMPImage,
-    dlog,
-    framebuffer::Pixel,
     window::{WINDOWS, Window},
 };
 
@@ -22,7 +20,13 @@ pub fn mice_poll() -> ! {
     let mut reader = BufReader::with_capacity(size_of::<MiceEvent>() * 1, file);
     let win = {
         let mut windows = WINDOWS.lock().expect("failed to get lock on windows");
-        windows.add_window(Window::new_from_pixels(0, 0, 32, 32, cursor_bmp.pixels()))
+        windows.add_window(Window::new_from_pixels(
+            0,
+            0,
+            cursor_bmp.width(),
+            cursor_bmp.height(),
+            cursor_bmp.pixels(),
+        ))
     };
 
     loop {
