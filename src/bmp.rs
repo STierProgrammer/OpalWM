@@ -55,9 +55,9 @@ impl Default for BMPBitmasks {
         // RGB
         Self {
             red_channel: 0xFF0000,
-            green_channel: 0xFF00,
-            blue_channel: 0xFF,
-            alpha_channel: 0x00,
+            green_channel: 0x00FF00,
+            blue_channel: 0x0000FF,
+            alpha_channel: 0xFF000000,
         }
     }
 }
@@ -129,16 +129,17 @@ impl<'a> BMPImage<'a> {
         let dib_header_bytes = take_from_slice(size_of::<DIBHeader>())?;
         let dib_header: DIBHeader = DIBHeader::read_from_bytes(dib_header_bytes)
             .expect("reading DIBHeader should never fail");
+
+        dlog!("DIBHeader is {dib_header:#x?}");
         if dib_header.color_platte_colors != 0 {
             return Err(BMPParseError::Unsupported("Color tables are unsupported"));
         }
 
-        if dib_header.bpp != 32 {
+        if dib_header.bpp != 32 && dib_header.bpp != 24 {
             return Err(BMPParseError::UnsupportedBPP);
         }
 
         let unread = dib_header.size - size_of::<DIBHeader>() as u32;
-        dlog!("DIBHeader is {dib_header:#x?}, unread size: {unread:#x}");
 
         let bitmasks = match dib_header.compression {
             COMPRESS_B_BITFIELDS if unread as usize >= size_of::<BMPBitmasks>() => {
@@ -234,6 +235,7 @@ impl<'a> Iterator for BMPPixels<'a> {
         let mut pixel_u32_bytes: [u8; 4] = [0xFFu8; 4];
         match pixel_bytes.len() {
             4 => pixel_u32_bytes.copy_from_slice(pixel_bytes),
+            3 => pixel_u32_bytes[..3].copy_from_slice(pixel_bytes),
             _ => unimplemented!("{} BPP Not yet implemented", self.image.bpp),
         }
 
@@ -254,5 +256,11 @@ impl<'a> Iterator for BMPPixels<'a> {
             blue as u8,
             alpha as u8,
         ))
+    }
+}
+
+impl<'a> ExactSizeIterator for BMPPixels<'a> {
+    fn len(&self) -> usize {
+        self.image.pixels.len() / self.bytes_per_pixel as usize
     }
 }

@@ -20,13 +20,7 @@ pub fn mice_poll() -> ! {
     let mut reader = BufReader::with_capacity(size_of::<MiceEvent>() * 1, file);
     let win = {
         let mut windows = WINDOWS.lock().expect("failed to get lock on windows");
-        windows.add_window(Window::new_from_pixels(
-            0,
-            0,
-            cursor_bmp.width(),
-            cursor_bmp.height(),
-            cursor_bmp.pixels(),
-        ))
+        windows.add_window(Window::new_from_bmp(0, 0, cursor_bmp))
     };
 
     loop {

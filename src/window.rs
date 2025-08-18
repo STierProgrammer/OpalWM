@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use crate::{
+    bmp::BMPImage,
     dlog,
     framebuffer::{self, FB_INFO, Framebuffer, Pixel},
 };
@@ -18,14 +19,26 @@ pub struct Window {
 }
 
 impl Window {
+    /// Creates a new Window from a given BMP Image
+    pub fn new_from_bmp(pos_x: usize, pos_y: usize, image: BMPImage) -> Window {
+        Self::new_from_pixels(pos_x, pos_y, image.width(), image.height(), image.pixels())
+    }
+
+    /// Creates a new Window and fills it with `fill_pixels`
     pub fn new_from_pixels(
         pos_x: usize,
         pos_y: usize,
         width: usize,
         height: usize,
-        fill_pixels: impl Iterator<Item = Pixel>,
+        fill_pixels: impl ExactSizeIterator + Iterator<Item = Pixel>,
     ) -> Window {
         let mut pixels = vec![Pixel::from_hex(0); width * height];
+
+        assert_eq!(
+            pixels.len(),
+            fill_pixels.len(),
+            "The pixels to fill with must have a length of width*height"
+        );
 
         let fill_pixels = fill_pixels.enumerate();
         for (i, pi) in fill_pixels {
@@ -43,6 +56,7 @@ impl Window {
         }
     }
 
+    /// Creates a new Window and fills it repeatedly with a given `pixel`
     pub fn new_filled_with(
         pos_x: usize,
         pos_y: usize,
@@ -61,6 +75,10 @@ impl Window {
             pixels,
         }
     }
+
+    /// Draws the whole window without syncing the results to the real framebuffer.
+    ///
+    /// [`fb.sync_pixels_rect`] must be called afterwards on the area the window is in.
     pub fn draw(&self, fb: &mut Framebuffer) {
         fb.draw_rect(
             self.pos_x,
@@ -71,6 +89,8 @@ impl Window {
         );
     }
 
+    /// Returns the damage a window may have caused on the framebuffer, if it's position or dimensions changed
+    /// There is 2 damages: The damage before the operation, The damage after the operation
     fn damage(&self) -> DamageRegion {
         DamageRegion {
             pos_x: self.pos_x,
