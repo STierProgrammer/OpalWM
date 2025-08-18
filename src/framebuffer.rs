@@ -15,17 +15,27 @@ use crate::dlog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 /// Represents a single pixel
-#[repr(transparent)]
-pub struct Pixel(u32);
+#[repr(C)]
+pub struct Pixel {
+    blue: u8,
+    green: u8,
+    red: u8,
+    alpha: u8,
+}
 
 impl Pixel {
-    /// Construct a Pixel from an RGB Color
-    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
-        Self::from_hex(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+    /// Construct a Pixel from an RGBA Color
+    pub const fn from_rgba(r: u8, g: u8, b: u8, alpha: u8) -> Self {
+        Self {
+            blue: b,
+            green: g,
+            red: r,
+            alpha,
+        }
     }
     /// Construct a Pixel from a hex RGB Color
     pub const fn from_hex(rgb: u32) -> Self {
-        Self(rgb & 0xFFFFFF)
+        unsafe { core::mem::transmute(rgb) }
     }
 }
 
@@ -129,7 +139,35 @@ impl Framebuffer {
             let target_pixels = &mut self.pixels[target_row_index..target_row_index + width];
             let src_pixels = &pixels[src_row_index..src_row_index + width];
 
-            target_pixels.copy_from_slice(src_pixels);
+            /* we want to blend the target and the src pixels together */
+            for (target_pixel, src_pixel) in target_pixels.iter_mut().zip(src_pixels.iter()) {
+                let result_pixel = unsafe {
+                    let src_red = src_pixel.red as u16;
+                    let target_red = target_pixel.red as u16;
+
+                    let src_green = src_pixel.green as u16;
+                    let target_green = target_pixel.green as u16;
+
+                    let src_blue = src_pixel.blue as u16;
+                    let target_blue = target_pixel.blue as u16;
+
+                    let alpha = src_pixel.alpha as u16;
+
+                    let red = (src_red * alpha + (target_red * (255 - alpha))) / 255;
+                    let green = (src_green * alpha + (target_green * (255 - alpha))) / 255;
+                    let blue = (src_blue * alpha + (target_blue * (255 - alpha))) / 255;
+
+                    let result_alpha = src_pixel.alpha.max(target_pixel.alpha);
+                    Pixel {
+                        red: red as u8,
+                        green: green as u8,
+                        blue: blue as u8,
+                        alpha: result_alpha,
+                    }
+                };
+
+                *target_pixel = result_pixel;
+            }
         }
     }
 
@@ -193,7 +231,13 @@ pub fn clear() {
     let mut fb = FRAMEBUFFER
         .lock()
         .expect("Failed to hold lock on framebuffer");
-    fb.draw_rect_filled_with(0, 0, FB_INFO.width, FB_INFO.height, Pixel::from_hex(0));
+    fb.draw_rect_filled_with(
+        0,
+        0,
+        FB_INFO.width,
+        FB_INFO.height,
+        Pixel::from_rgba(0, 0, 0, 0xAA),
+    );
     fb.sync_pixels_full();
     dlog!("Cleared screen");
 }

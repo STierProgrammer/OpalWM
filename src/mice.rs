@@ -6,27 +6,24 @@ use std::{
 use safa_api::abi::input::{MiceEvent, MouseEventKind};
 
 use crate::{
+    bmp::BMPImage,
     dlog,
     framebuffer::Pixel,
     window::{WINDOWS, Window},
 };
 
+const CURSOR_BYTES: &[u8] = include_bytes!("../assets/beta-cursor.bmp");
+
 /// Polls the mouse device for incoming events and handles them
 pub fn mice_poll() -> ! {
+    let cursor_bmp = BMPImage::from_slice(CURSOR_BYTES).expect("Failed to parse cursor.bmp");
+
     let file = File::open("dev:/inmice").expect("Failed to open the Mouse Device");
     let mut reader = BufReader::with_capacity(size_of::<MiceEvent>() * 1, file);
     let win = {
         let mut windows = WINDOWS.lock().expect("failed to get lock on windows");
-        windows.add_window(Window::new_filled_with(
-            0,
-            0,
-            16,
-            16,
-            Pixel::from_rgb(0xFF, 0, 0),
-        ))
+        windows.add_window(Window::new_from_pixels(0, 0, 32, 32, cursor_bmp.pixels()))
     };
-
-    let mice_pixels = 16 * 16;
 
     loop {
         let mut event_bytes = [0u8; size_of::<MiceEvent>()];

@@ -18,6 +18,31 @@ pub struct Window {
 }
 
 impl Window {
+    pub fn new_from_pixels(
+        pos_x: usize,
+        pos_y: usize,
+        width: usize,
+        height: usize,
+        fill_pixels: impl Iterator<Item = Pixel>,
+    ) -> Window {
+        let mut pixels = vec![Pixel::from_hex(0); width * height];
+
+        let fill_pixels = fill_pixels.enumerate();
+        for (i, pi) in fill_pixels {
+            pixels[i] = pi;
+        }
+
+        let pixels = pixels.into_boxed_slice();
+
+        Window {
+            pos_x,
+            pos_y,
+            width,
+            height,
+            pixels,
+        }
+    }
+
     pub fn new_filled_with(
         pos_x: usize,
         pos_y: usize,

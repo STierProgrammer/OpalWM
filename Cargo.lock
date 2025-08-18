@@ -26,6 +26,8 @@ dependencies = [
  "opal-abi",
  "safa-api",
  "thiserror",
+ "zerocopy",
+ "zerocopy-derive",
 ]
 
 [[package]]
