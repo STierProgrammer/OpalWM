@@ -2,7 +2,8 @@ use crate::bmp::BMPImage;
 use crate::com::listener;
 use crate::framebuffer::Pixel;
 use crate::logging::disable_terminal_logging;
-use crate::window::{WINDOWS, Window, WindowKind};
+use crate::mice::MiceCursor;
+use crate::window::{WINDOWS, Window, WindowKind, redraw};
 
 /// Set to true if you want really verbose slow information
 ///
@@ -16,6 +17,13 @@ mod logging;
 mod mice;
 mod window;
 
+fn main_loop() {
+    let mut cursor = MiceCursor::create();
+    loop {
+        cursor.handle_event();
+        redraw();
+    }
+}
 fn main() {
     log!("WM Starting");
     disable_terminal_logging();
@@ -30,8 +38,7 @@ fn main() {
             Window::new_filled_with(270, 400, 200, 200, Pixel::from_rgba(0xFF, 0, 0, 0xFF / 2)),
             WindowKind::Normal,
         );
-        w.damage_redraw();
     }
-    std::thread::spawn(mice::mice_poll);
+    std::thread::spawn(main_loop);
     listener::listen()
 }

@@ -1,10 +1,11 @@
-use zerocopy::{IntoBytes, TryFromBytes};
-use zerocopy_derive::{Immutable, IntoBytes, KnownLayout, TryFromBytes};
+use zerocopy::{FromBytes, IntoBytes, TryFromBytes};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes};
 
 use crate::com::{MAX_PACKET_SIZE, request::RequestParseErr};
 
-const RESPONSE_OK_MAGIC: u32 = 0xBC_F00D_AD;
-const RESPONSE_ERR_MAGIC: u32 = 0xBC_DEAD_AD;
+const RESPONSE_OK_MAGIC: u32 = 0xA1E_F00D_D;
+const RESPONSE_EVENT_MAGIC: u32 = 0xAD_FEED_BC;
+const RESPONSE_ERR_MAGIC: u32 = 0xBAD_F00D_C;
 
 type RawResponseData = [u8; MAX_PACKET_SIZE - size_of::<ResponseError>() - 4];
 
@@ -16,6 +17,8 @@ pub enum ResponseError {
     InvalidRequestKind,
     PacketTooShort,
     InvalidData,
+    UnknownFatalError,
+    UnknownWindow,
 }
 
 impl From<RequestParseErr> for ResponseError {
@@ -28,17 +31,50 @@ impl From<RequestParseErr> for ResponseError {
     }
 }
 
+#[derive(Debug, FromBytes, IntoBytes, Immutable, Clone, Copy, PartialEq, Eq)]
+/// Response of [`super::request::CreateWindow`]
+pub struct CreateWindowResp {
+    /// The created window's shared memory key, it can be used to write to the window's pixels.
+    shm_key: usize,
+    win_id: u16,
+    __0: u16,
+    __1: u32,
+}
+
+impl CreateWindowResp {
+    /// The created window's ID
+    pub const fn window_id(&self) -> u16 {
+        self.win_id
+    }
+
+    pub const fn shm_key(&self) -> usize {
+        self.shm_key
+    }
+
+    pub const fn new(win_id: u16, shm_key: usize) -> Self {
+        Self {
+            win_id,
+            shm_key,
+            __0: 0,
+            __1: 0,
+        }
+    }
+}
+
 /// Represents a Raw Ok Response kind, should be converted to an [`OkResponse`]
 #[derive(TryFromBytes, IntoBytes, Immutable, Clone, Copy)]
 #[repr(u32)]
 pub enum OkResponseKind {
     Success,
+    // See [`CreateWindowResp`]
+    WindowCreated,
 }
 
 impl OkResponseKind {
     pub const fn size(&self) -> usize {
         match self {
             Self::Success => 0,
+            Self::WindowCreated => size_of::<CreateWindowResp>(),
         }
     }
 }
@@ -49,12 +85,14 @@ const _: () = assert!(size_of::<OkResponseKind>() == size_of::<ResponseError>())
 /// Represents an Ok response sent by the WM as a reply to a Request
 pub enum OkResponse {
     Success,
+    WindowCreated(CreateWindowResp),
 }
 
 impl OkResponse {
-    const fn as_bytes(&self) -> (&[u8], OkResponseKind) {
+    fn as_bytes(&self) -> (&[u8], OkResponseKind) {
         match self {
             Self::Success => (&[], OkResponseKind::Success),
+            Self::WindowCreated(win) => (win.as_bytes(), OkResponseKind::WindowCreated),
         }
     }
 }
@@ -94,10 +132,12 @@ impl RawOkResponse {
     pub fn consume(self) -> OkResponse {
         let size = self.kind.size();
         let bytes = &self.data[..size];
-        _ = bytes;
 
         match self.kind {
             OkResponseKind::Success => OkResponse::Success,
+            OkResponseKind::WindowCreated => {
+                OkResponse::WindowCreated(CreateWindowResp::read_from_bytes(bytes).unwrap())
+            }
         }
     }
 }

@@ -10,6 +10,8 @@ use opal_abi::com::{
 };
 use safa_api::sockets::UnixSockConnection;
 
+pub mod window;
+
 static WM_CONNECTION: LazyLock<Mutex<UnixSockConnection>> = LazyLock::new(|| {
     use safa_api::sockets::{SockKind, UnixSockConnectionBuilder};
 
@@ -23,7 +25,7 @@ static WM_CONNECTION: LazyLock<Mutex<UnixSockConnection>> = LazyLock::new(|| {
         .unwrap_or_else(|_| panic!("Failed to establish connection with the Opal WM at {addr}"))
 });
 
-fn send_request(req: Request) -> io::Result<Response> {
+pub(crate) fn send_request(req: Request) -> io::Result<Response> {
     #[repr(align(16))]
     struct Packet(RawPacketBytes);
 
@@ -46,5 +48,8 @@ fn send_request(req: Request) -> io::Result<Response> {
 /// Initializes the client that is going to communicate with the WM
 /// Panicks on failure
 pub fn init() {
-    assert!(send_request(Request::Ping(Ping)).is_ok_and(|o| o == Ok(OkResponse::Success)),)
+    assert!(
+        send_request(Request::Ping(Ping)).is_ok_and(|o| o == Ok(OkResponse::Success)),
+        "Ping request, responded with an error"
+    )
 }

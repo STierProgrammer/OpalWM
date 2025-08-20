@@ -1,13 +1,23 @@
-use std::{collections::HashMap, iter::Sum, ops::Add, sync::Mutex};
+use std::{
+    collections::HashMap,
+    iter::Sum,
+    ops::Add,
+    ptr::NonNull,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use indexmap::IndexSet;
 use rustc_hash::{FxBuildHasher, FxHashMap};
+use safa_api::abi::mem::{MemMapFlags, ShmFlags};
 
 use crate::{
     REALLY_VERBOSE,
     bmp::BMPImage,
     dlog,
-    framebuffer::{self, FB_INFO, Framebuffer, Pixel},
+    framebuffer::{self, BG_PIXEL, FB_INFO, Framebuffer, Pixel},
 };
 
 // a Rectangle
@@ -18,11 +28,65 @@ pub struct Window {
     //
     width: usize,
     height: usize,
-    //
-    pixels: Box<[Pixel]>,
+    /// The pixels of the window, safe to use because they live as long as the window itself.
+    pixels: NonNull<[Pixel]>,
+    // TODO: Implement a good shared memory wrapper to drop this automatically.
+    shm_key: usize,
+    // TODO: Implement a good shared memory or a resource wrapper to drop this automatically.
+    shm_ri: usize,
+    // TODO: Implement a good memory map or a resource wrapper to drop this automatically.
+    mmap_ri: usize,
 }
 
+impl Drop for Window {
+    fn drop(&mut self) {
+        safa_api::syscalls::resources::destroy_resource(self.shm_ri)
+            .expect("SHM was dropped before Window was dropped");
+        safa_api::syscalls::resources::destroy_resource(self.mmap_ri)
+            .expect("MMAP was dropped before Window was dropped");
+    }
+}
+
+unsafe impl Send for Window {}
+unsafe impl Sync for Window {}
+
 impl Window {
+    /// A shared memory key that lives as long as the window itself, and can be used to access the window's pixels.
+    pub const fn shm_key(&self) -> &usize {
+        &self.shm_key
+    }
+
+    fn allocate_pixel_buffer(
+        width: usize,
+        height: usize,
+        fill_pixel: Pixel,
+    ) -> (NonNull<[Pixel]>, usize, usize, usize) {
+        let pixels_required = width * height;
+        let bytes_required = pixels_required * size_of::<Pixel>();
+        let pages_required = bytes_required.div_ceil(4096);
+
+        let (shm_key, shm_ri) =
+            safa_api::syscalls::mem::shm_create(pages_required, ShmFlags::from_bits_retaining(0))
+                .expect("Failed to create a new shared mem mapping for a Window");
+
+        let (mmap_ri, pixels_bytes) = safa_api::syscalls::mem::map(
+            core::ptr::null(),
+            pages_required,
+            0,
+            Some(shm_ri),
+            None,
+            MemMapFlags::WRITE,
+        )
+        .expect("Failed to memmap a new Window's pixels");
+
+        let mut pixels =
+            NonNull::slice_from_raw_parts(pixels_bytes.cast::<Pixel>(), pixels_required);
+        unsafe {
+            pixels.as_mut().fill(fill_pixel);
+        }
+        (pixels, shm_ri, mmap_ri, shm_key)
+    }
+
     /// Creates a new Window from a given BMP Image
     pub fn new_from_bmp(pos_x: usize, pos_y: usize, image: BMPImage) -> Window {
         Self::new_from_pixels(pos_x, pos_y, image.width(), image.height(), image.pixels())
@@ -36,7 +100,9 @@ impl Window {
         height: usize,
         fill_pixels: impl ExactSizeIterator + Iterator<Item = Pixel>,
     ) -> Window {
-        let mut pixels = vec![Pixel::from_hex(0); width * height];
+        let (mut pixels, shm_ri, mmap_ri, shm_key) =
+            Self::allocate_pixel_buffer(width, height, Pixel::from_hex(0));
+        let pixels_mut = unsafe { pixels.as_mut() };
 
         assert_eq!(
             pixels.len(),
@@ -46,10 +112,8 @@ impl Window {
 
         let fill_pixels = fill_pixels.enumerate();
         for (i, pi) in fill_pixels {
-            pixels[i] = pi;
+            pixels_mut[i] = pi;
         }
-
-        let pixels = pixels.into_boxed_slice();
 
         Window {
             pos_x,
@@ -57,6 +121,9 @@ impl Window {
             width,
             height,
             pixels,
+            shm_key,
+            shm_ri,
+            mmap_ri,
         }
     }
 
@@ -68,8 +135,7 @@ impl Window {
         height: usize,
         pixel: Pixel,
     ) -> Self {
-        let pixels = vec![pixel; width * height];
-        let pixels = pixels.into_boxed_slice();
+        let (pixels, shm_ri, mmap_ri, shm_key) = Self::allocate_pixel_buffer(width, height, pixel);
 
         Window {
             pos_x,
@@ -77,6 +143,9 @@ impl Window {
             width,
             height,
             pixels,
+            shm_ri,
+            mmap_ri,
+            shm_key,
         }
     }
 
@@ -84,13 +153,9 @@ impl Window {
     ///
     /// [`fb.sync_pixels_rect`] must be called afterwards on the area the window is in.
     fn draw(&self, fb: &mut Framebuffer) {
-        fb.draw_rect(
-            self.pos_x,
-            self.pos_y,
-            self.width,
-            self.height,
-            &self.pixels,
-        );
+        fb.draw_rect(self.pos_x, self.pos_y, self.width, self.height, unsafe {
+            self.pixels.as_ref()
+        });
     }
 
     /// Draws the window from intersection point without syncing the results to the real framebuffer.
@@ -119,7 +184,7 @@ impl Window {
             off_y,
             width,
             height,
-            pixels,
+            unsafe { pixels.as_ref() },
             pixels_width,
             pixels_height,
             top_x_within,
@@ -259,7 +324,7 @@ pub struct Windows {
     window_ids: [u128; 8],
     focused_window: Option<WinID>,
 
-    damage_regions: Vec<DamageRegion>,
+    damaged_regions: Vec<DamageRegion>,
 }
 
 impl Windows {
@@ -269,10 +334,18 @@ impl Windows {
             normal_windows: IndexSet::with_hasher(FxBuildHasher),
             focused_window: None,
 
-            damage_regions: Vec::new(),
+            damaged_regions: Vec::new(),
             windows: HashMap::with_hasher(FxBuildHasher),
             window_ids: [0; 8],
         }
+    }
+
+    fn insert_damage(&mut self, regions: &[DamageRegion]) {
+        // Faster than extend_from_slice for some reason (I checked the code they aren't reserving the additional elements)
+        self.damaged_regions.reserve(regions.len());
+        self.damaged_regions.extend_from_slice(regions);
+
+        SHOULD_REDRAW.store(true, Ordering::Release);
     }
 
     /// Allocates a new Window ID
@@ -316,9 +389,13 @@ impl Windows {
 
     /// Redraw the damage caused by (and apply the results of) playing around with the windows using `self`
     pub fn damage_redraw(&mut self) {
+        if self.damaged_regions.is_empty() {
+            return;
+        }
+
         let mut fb = framebuffer::framebuffer();
 
-        let damage = core::mem::take(&mut self.damage_regions);
+        let damage = core::mem::take(&mut self.damaged_regions);
 
         for region in &damage {
             // Clear the damaged region
@@ -327,7 +404,7 @@ impl Windows {
                 region.pos_y,
                 region.width,
                 region.height,
-                Pixel::from_hex(0x0),
+                BG_PIXEL,
             );
         }
 
@@ -364,6 +441,8 @@ impl Windows {
         for r in damage {
             fb.sync_pixels_rect(r.pos_x, r.pos_y, r.width, r.height);
         }
+
+        SHOULD_REDRAW.store(false, Ordering::Release);
     }
 
     /// Adds `x` to window with the ID  `win_id` x position and `y` to the window with the ID `win_id`'s Y position
@@ -407,10 +486,7 @@ impl Windows {
             );
         }
 
-        // Faster than extend_from_slice for some reason (I checked the code they aren't reserving the additional elements)
-        self.damage_regions.reserve(2);
-        self.damage_regions.push(damage0);
-        self.damage_regions.push(damage1);
+        self.insert_damage(&[damage0, damage1]);
         Some((damage1.pos_x, damage1.pos_y))
     }
 
@@ -426,8 +502,7 @@ impl Windows {
             WindowKind::Overlay => self.overlay_windows.insert(id),
         };
 
-        self.damage_regions.push(damage);
-
+        self.insert_damage(&[damage]);
         Some(id)
     }
 
@@ -449,37 +524,97 @@ impl Windows {
             height,
         };
 
-        let win_id = self
-            .normal_windows
-            .iter()
-            .rev()
-            .find(|win_id| {
-                let (win, _) = self.windows.get(win_id).expect(
-                    "Window wasn't removed from the Z-ordering when it's ID was deallocated",
-                );
-                // TODO: this could be wrote better, perhaps?
-                let overlaps = region.overlaps_with(win).is_some();
-                if overlaps {
-                    self.damage_regions.push(win.damage());
-                }
-                overlaps
-            })
-            .copied();
+        let results = self.normal_windows.iter().rev().find_map(|win_id| {
+            let (win, _) = self
+                .windows
+                .get(win_id)
+                .expect("Window wasn't removed from the Z-ordering when it's ID was deallocated");
+            let overlaps = region.overlaps_with(win).is_some();
+            overlaps.then_some((*win_id, win.damage()))
+        });
 
-        if let Some(win_id) = win_id {
+        if let Some((win_id, damage)) = results {
             self.normal_windows.shift_remove(&win_id);
             self.normal_windows.insert(win_id);
             self.focused_window = Some(win_id);
+            self.insert_damage(&[damage]);
         } else {
             self.focused_window = None;
         }
-        win_id
+        results.map(|(id, _)| id)
     }
 
     /// Returns the ID of the focused Window
     pub const fn focused_window(&self) -> Option<WinID> {
         self.focused_window
     }
+
+    pub fn damage_window(
+        &mut self,
+        win_id: WinID,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<(), ()> {
+        let (win, _) = self.windows.get_mut(&win_id).ok_or(())?;
+
+        let x = x.min(win.width);
+        let y = y.min(win.height);
+
+        let pos_x = (win.pos_x + x).min(win.pos_x + win.width);
+        let pos_y = (win.pos_y + y).min(win.pos_y + win.height);
+        let width = width.min(win.width - x);
+        let height = height.min(win.height - y);
+
+        self.insert_damage(&[DamageRegion {
+            pos_x,
+            pos_y,
+            width,
+            height,
+        }]);
+        Ok(())
+    }
 }
 
 pub static WINDOWS: Mutex<Windows> = Mutex::new(Windows::new());
+
+/// Adds a window with `kind` kind, returns the ID of the window
+pub fn add_window(window: Window, kind: WindowKind) -> Option<WinID> {
+    WINDOWS
+        .lock()
+        .expect("Failed to acquire lock on Windows while adding a Window")
+        .add_window(window, kind)
+}
+
+pub fn damage_window(
+    win_id: WinID,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> Result<(), ()> {
+    WINDOWS
+        .lock()
+        .expect("Failed to acquire lock on Windows while damaging a Window")
+        .damage_window(win_id, x, y, width, height)
+}
+
+/// Whether we should redraw the screen
+static SHOULD_REDRAW: AtomicBool = AtomicBool::new(false);
+
+/// Returns true if you should call `redraw_screen`
+fn should_redraw() -> bool {
+    SHOULD_REDRAW.load(Ordering::Acquire)
+}
+
+/// Better called from a single thread at a time
+/// Redraws changed areas of the screen in case we need to
+pub fn redraw() {
+    if should_redraw() {
+        WINDOWS
+            .lock()
+            .expect("Failed to acquire lock on Windows while redrawing")
+            .damage_redraw();
+    }
+}

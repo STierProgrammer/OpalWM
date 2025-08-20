@@ -5,12 +5,15 @@ use std::fs::OpenOptions;
 use std::os::safaos::AsRawResource;
 use std::os::safaos::IoUtils;
 use std::usize;
+use zerocopy_derive::FromBytes;
+use zerocopy_derive::Immutable;
+use zerocopy_derive::IntoBytes;
 
 use safa_api::abi::mem::MemMapFlags;
 
 use crate::dlog;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, IntoBytes, FromBytes, Immutable)]
 /// Represents a single pixel
 #[repr(C)]
 pub struct Pixel {
@@ -281,18 +284,14 @@ pub fn framebuffer() -> MutexGuard<'static, Framebuffer> {
         .expect("Failed to acquire lock on framebuffer")
 }
 
+pub const BG_PIXEL: Pixel = Pixel::from_hex(0x282828);
+
 /// Clears the screen
 pub fn clear() {
     let mut fb = FRAMEBUFFER
         .lock()
         .expect("Failed to hold lock on framebuffer");
-    fb.draw_rect_filled_with(
-        0,
-        0,
-        FB_INFO.width,
-        FB_INFO.height,
-        Pixel::from_rgba(0, 0, 0, 0xAA),
-    );
+    fb.draw_rect_filled_with(0, 0, FB_INFO.width, FB_INFO.height, BG_PIXEL);
     fb.sync_pixels_full();
     dlog!("Cleared screen");
 }

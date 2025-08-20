@@ -5,13 +5,16 @@ use std::{
 
 use opal_abi::com::{
     request::{Ping, Request},
-    response::{OkResponse, ResponseError},
+    response::{CreateWindowResp, OkResponse, ResponseError},
 };
 use safa_api::sockets::{SockKind, UnixListenerBuilder, UnixSockConnection};
 
 use crate::{
     com::{ClientComPipe, ReadError},
-    dlog, elog, log, logging,
+    dlog, elog,
+    framebuffer::Pixel,
+    log, logging,
+    window::{self, Window, WindowKind},
 };
 
 fn spawn_hello() {
@@ -25,14 +28,45 @@ fn spawn_hello() {
 
 fn handle_connect(connection: UnixSockConnection) {
     dlog!("Handling a new connection");
-    let pipe = ClientComPipe::new(connection);
+    let mut pipe = ClientComPipe::new(connection);
 
     loop {
         dlog!("Waiting for a Request");
 
         let response = match pipe.read_request() {
             Ok(req) => match req {
-                Request::CreateWindow(_) => todo!(),
+                Request::CreateWindow(request) => {
+                    let height = request.height() as usize;
+                    let width = request.width() as usize;
+                    let pos_x = request.x() as usize;
+                    let pos_y = request.y() as usize;
+
+                    let window = Window::new_filled_with(
+                        pos_x,
+                        pos_y,
+                        width,
+                        height,
+                        Pixel::from_rgba(0, 0, 0, 0xFF),
+                    );
+
+                    let shm_key = *window.shm_key();
+                    window::add_window(window, WindowKind::Normal)
+                        .map(|id| {
+                            dlog!("Added Window {id}, with the SHM Key {shm_key} for a client");
+                            CreateWindowResp::new(id, shm_key)
+                        })
+                        .map(OkResponse::WindowCreated)
+                        .ok_or(ResponseError::UnknownFatalError)
+                }
+                Request::DamageWindow(damage) => window::damage_window(
+                    damage.win_id(),
+                    damage.x() as usize,
+                    damage.y() as usize,
+                    damage.width() as usize,
+                    damage.height() as usize,
+                )
+                .map(|()| OkResponse::Success)
+                .map_err(|()| ResponseError::UnknownWindow),
                 Request::Ping(Ping) => Ok(OkResponse::Success),
             },
             Err(read_error) => match read_error {
@@ -67,8 +101,6 @@ pub fn listen() -> ! {
     let listener = listener_builder.bind().expect("Failed to bind a listener");
     log!("WM Listening at {}", addr);
 
-    spawn_hello();
-    spawn_hello();
     spawn_hello();
 
     loop {

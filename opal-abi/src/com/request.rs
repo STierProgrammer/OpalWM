@@ -38,26 +38,37 @@ pub struct RequestHeader {
 #[repr(C)]
 pub struct CreateWindow {
     flags: u32,
-    __: u32,
-    width: usize,
-    height: usize,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 }
 
 impl CreateWindow {
     /// Constructs a new [`CreateWindow`] Request
-    pub const fn new(flags: u32, width: usize, height: usize) -> Self {
+    pub const fn new(flags: u32, width: u32, height: u32, x: u32, y: u32) -> Self {
         Self {
             flags,
-            __: 0,
             width,
             height,
+            x,
+            y,
         }
     }
 
-    pub const fn width(&self) -> usize {
+    pub const fn x(&self) -> u32 {
+        self.x
+    }
+
+    pub const fn y(&self) -> u32 {
+        self.y
+    }
+
+    pub const fn width(&self) -> u32 {
         self.width
     }
-    pub const fn height(&self) -> usize {
+
+    pub const fn height(&self) -> u32 {
         self.height
     }
 }
@@ -73,11 +84,63 @@ impl Ping {
     }
 }
 
+/// A Request to ask the WM to mark width*height pixels as Damaged (i.e should be updated).
+#[derive(FromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
+#[repr(C)]
+pub struct DamageWindow {
+    /// X Position within the Window
+    x: u32,
+    /// Y Position within the Window
+    y: u32,
+    /// Width of the given pixels to draw
+    width: u32,
+    /// Height of the given pixels to draw
+    height: u32,
+    /// The ID of the target Window
+    win_id: u16,
+    __0: u16,
+}
+
+impl DamageWindow {
+    pub const fn new(win_id: u16, start_x: u32, start_y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x: start_x,
+            y: start_y,
+            width,
+            height,
+            win_id,
+            __0: 0,
+        }
+    }
+
+    pub const fn win_id(&self) -> u16 {
+        self.win_id
+    }
+
+    pub const fn x(&self) -> u32 {
+        self.x
+    }
+
+    pub const fn y(&self) -> u32 {
+        self.y
+    }
+
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+}
+
 #[derive(TryFromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
 #[repr(u16)]
 pub enum RequestKind {
     /// See [`CreateWindow`]
     CreateWindow,
+    /// See [`DamageWindow`]
+    DamageWindow,
     /// See [`Ping`]
     Ping,
 }
@@ -88,12 +151,14 @@ impl RequestKind {
         match self {
             Self::CreateWindow => size_of::<CreateWindow>(),
             Self::Ping => size_of::<Ping>(),
+            Self::DamageWindow => size_of::<DamageWindow>(),
         }
     }
 }
 
 pub enum Request {
     CreateWindow(CreateWindow),
+    DamageWindow(DamageWindow),
     Ping(Ping),
 }
 
@@ -102,6 +167,7 @@ impl Request {
     pub fn as_bytes(&self) -> (&[u8], RequestKind) {
         match self {
             Self::CreateWindow(r) => (r.as_bytes(), RequestKind::CreateWindow),
+            Self::DamageWindow(d) => (d.as_bytes(), RequestKind::DamageWindow),
             Self::Ping(Ping) => (&[], RequestKind::Ping),
         }
     }
@@ -161,6 +227,12 @@ impl RawRequest {
         match self.kind {
             RequestKind::CreateWindow => {
                 Request::CreateWindow(match FromBytes::read_from_bytes(&bytes) {
+                    Ok(k) => k,
+                    Err(_) => unreachable!(),
+                })
+            }
+            RequestKind::DamageWindow => {
+                Request::DamageWindow(match FromBytes::read_from_bytes(&bytes) {
                     Ok(k) => k,
                     Err(_) => unreachable!(),
                 })

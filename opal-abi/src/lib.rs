@@ -6,3 +6,5 @@ pub const CONNECT_ABSTRACT_ADDR: &str = "opal_wm::connect";
 /// The communication protocol, contains he layout of packets
 /// that can be sent to and from the WM
 pub mod com;
+
+pub mod fb;

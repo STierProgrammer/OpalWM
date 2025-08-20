@@ -31,35 +31,35 @@ impl ClientComPipe {
     }
 
     /// Reads 1 Request from the Client
-    pub fn read_request(&self) -> Result<Request, ReadError> {
+    pub fn read_request(&mut self) -> Result<Request, ReadError> {
         let mut buf = [0u8; MAX_PACKET_SIZE];
-        let len = (&mut &*self).read(&mut buf)?;
+        let len = self.read(&mut buf)?;
         let request = &buf[..len];
         Ok(RawRequest::try_from_bytes(request)?.into_request())
     }
 
     /// Writes 1 Response to the client's last request
-    pub fn write_response(&self, response: Response) -> io::Result<()> {
+    pub fn write_response(&mut self, response: Response) -> io::Result<()> {
         let raw: RawResponse = response.into();
 
         let bytes = raw.into_bytes();
-        let len = (&mut &*self).write(bytes)?;
+        let len = self.write(bytes)?;
         debug_assert_eq!(len, bytes.len());
         Ok(())
     }
 }
 
-impl<'a> Read for &'a ClientComPipe {
+impl<'a> Read for ClientComPipe {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        Read::read(&mut &self.0, buf)
+        Read::read(&mut self.0, buf)
     }
 }
 
-impl<'a> Write for &'a ClientComPipe {
+impl<'a> Write for ClientComPipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Write::write(&mut &self.0, buf)
+        Write::write(&mut self.0, buf)
     }
     fn flush(&mut self) -> io::Result<()> {
-        (&mut &self.0).flush()
+        self.0.flush()
     }
 }
