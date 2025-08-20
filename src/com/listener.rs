@@ -4,8 +4,8 @@ use std::{
 };
 
 use opal_abi::com::{
-    request::{Ping, Request},
-    response::{CreateWindowResp, OkResponse, ResponseError},
+    request::RequestKind,
+    response::{CreateWindowResp, OkResponse, Response, error::ResponseError},
 };
 use safa_api::sockets::{SockKind, UnixListenerBuilder, UnixSockConnection};
 
@@ -34,8 +34,8 @@ fn handle_connect(connection: UnixSockConnection) {
         dlog!("Waiting for a Request");
 
         let response = match pipe.read_request() {
-            Ok(req) => match req {
-                Request::CreateWindow(request) => {
+            Ok(req) => match req.kind() {
+                RequestKind::CreateWindow(request) => {
                     let height = request.height() as usize;
                     let width = request.width() as usize;
                     let pos_x = request.x() as usize;
@@ -58,7 +58,7 @@ fn handle_connect(connection: UnixSockConnection) {
                         .map(OkResponse::WindowCreated)
                         .ok_or(ResponseError::UnknownFatalError)
                 }
-                Request::DamageWindow(damage) => window::damage_window(
+                RequestKind::DamageWindow(damage) => window::damage_window(
                     damage.win_id(),
                     damage.x() as usize,
                     damage.y() as usize,
@@ -67,7 +67,7 @@ fn handle_connect(connection: UnixSockConnection) {
                 )
                 .map(|()| OkResponse::Success)
                 .map_err(|()| ResponseError::UnknownWindow),
-                Request::Ping(Ping) => Ok(OkResponse::Success),
+                RequestKind::Ping => Ok(OkResponse::Success),
             },
             Err(read_error) => match read_error {
                 ReadError::ParseErr(e) => Err(ResponseError::from(e)),
@@ -80,6 +80,11 @@ fn handle_connect(connection: UnixSockConnection) {
                     break;
                 }
             },
+        };
+
+        let response = match response {
+            Err(e) => Response::Err(e),
+            Ok(k) => Response::Ok(k),
         };
 
         dlog!("Writing a Response");

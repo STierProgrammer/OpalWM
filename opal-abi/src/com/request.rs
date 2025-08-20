@@ -1,40 +1,9 @@
-use std::{
-    error::Error,
-    fmt::{Debug, Display},
-    mem::offset_of,
-};
+use bincode::{Decode, Encode};
 
-use zerocopy::{ConvertError, FromBytes, IntoBytes, TryFromBytes};
-use zerocopy_derive::{FromBytes, Immutable, IntoBytes, TryFromBytes};
-
-use crate::com::MAX_PACKET_SIZE;
-
-const REQUEST_MAGIC: u32 = 0xBC_FEED_AD;
-
-#[derive(TryFromBytes, IntoBytes, Immutable)]
-#[repr(u32)]
-enum ReqMagicNumInner {
-    RequestMagic = REQUEST_MAGIC,
-}
-
-#[derive(TryFromBytes, IntoBytes, Immutable)]
-#[repr(transparent)]
-pub struct RequestMagicNumber(ReqMagicNumInner);
-impl RequestMagicNumber {
-    pub const fn get() -> Self {
-        Self(ReqMagicNumInner::RequestMagic)
-    }
-}
-
-/// The layout of a Request Header to the WM from a client
-#[derive(TryFromBytes, IntoBytes, Immutable)]
-#[repr(C)]
-pub struct RequestHeader {
-    magic: RequestMagicNumber,
-}
+use crate::com::packet::{BINCODE_CONFIG, MAX_PACKET_SIZE, PacketParseErr};
 
 /// A Request to ask the WM to Create a new Window
-#[derive(FromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 #[repr(C)]
 pub struct CreateWindow {
     flags: u32,
@@ -73,19 +42,8 @@ impl CreateWindow {
     }
 }
 
-/// A Request that pings connection with the WM
-#[derive(TryFromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
-#[repr(C)]
-pub struct Ping;
-impl Ping {
-    /// Constructs a new [`Self`] Request
-    pub const fn new() -> Self {
-        Self
-    }
-}
-
 /// A Request to ask the WM to mark width*height pixels as Damaged (i.e should be updated).
-#[derive(FromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 #[repr(C)]
 pub struct DamageWindow {
     /// X Position within the Window
@@ -134,145 +92,55 @@ impl DamageWindow {
     }
 }
 
-#[derive(TryFromBytes, IntoBytes, Immutable, Debug, Clone, Copy)]
-#[repr(u16)]
+/// The kind of request sent to the WM from a client
+#[derive(Debug, Encode, Decode)]
+#[repr(u32)]
 pub enum RequestKind {
-    /// See [`CreateWindow`]
-    CreateWindow,
-    /// See [`DamageWindow`]
-    DamageWindow,
-    /// See [`Ping`]
+    /// A request to ping the WM (ensures the connection is alive)
     Ping,
-}
-
-impl RequestKind {
-    /// Returns the size of the internal request data for a given kind
-    pub const fn size(self) -> usize {
-        match self {
-            Self::CreateWindow => size_of::<CreateWindow>(),
-            Self::Ping => size_of::<Ping>(),
-            Self::DamageWindow => size_of::<DamageWindow>(),
-        }
-    }
-}
-
-pub enum Request {
+    /// See [`CreateWindow`]
     CreateWindow(CreateWindow),
+    /// See [`DamageWindow`]
     DamageWindow(DamageWindow),
-    Ping(Ping),
+}
+
+#[derive(Encode, Decode, Clone, Copy, Debug)]
+#[repr(u32)]
+pub(crate) enum ReqMagicNumInner {
+    RequestMagic = 0xBC_FEED_AD,
+}
+
+/// The layout of a Request sent to the WM from a client
+#[derive(Debug, Encode, Decode)]
+#[repr(C)]
+pub struct Request {
+    magic: ReqMagicNumInner,
+    kind: RequestKind,
 }
 
 impl Request {
-    /// Given a Request convert it to bytes and a kind
-    pub fn as_bytes(&self) -> (&[u8], RequestKind) {
-        match self {
-            Self::CreateWindow(r) => (r.as_bytes(), RequestKind::CreateWindow),
-            Self::DamageWindow(d) => (d.as_bytes(), RequestKind::DamageWindow),
-            Self::Ping(Ping) => (&[], RequestKind::Ping),
-        }
-    }
-}
-
-type RawRequestData = [u8; MAX_PACKET_SIZE - size_of::<RequestHeader>() - size_of::<RequestKind>()];
-/// Describes a Request from the client to the WM
-#[derive(TryFromBytes, IntoBytes, Immutable)]
-#[repr(C)]
-pub struct RawRequest {
-    header: RequestHeader,
-    kind: RequestKind,
-    data: RawRequestData,
-}
-
-#[derive(Debug, Clone, Copy)]
-/// An Error while parsing a [`RawRequest`] sent from a client.
-pub enum RequestParseErr {
-    InvalidMagic,
-    InvalidRequestKind,
-    InvalidPacketSize,
-}
-
-impl Display for RequestParseErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(&self, f)
-    }
-}
-
-impl Error for RequestParseErr {}
-
-impl RawRequest {
-    /// Creates a new request that can be sent to the WM
-    pub fn new_valid(req: Request) -> Self {
-        let mut data: RawRequestData = unsafe { core::mem::zeroed() };
-        let (req_bytes, kind) = req.as_bytes();
-        data[..req_bytes.len()].copy_from_slice(req_bytes);
-
+    /// Constructs a new Request with the given kind.
+    pub const fn new(kind: RequestKind) -> Self {
         Self {
-            header: RequestHeader {
-                magic: RequestMagicNumber::get(),
-            },
+            magic: ReqMagicNumInner::RequestMagic,
             kind,
-            data,
         }
     }
 
-    /// Converts a reference to self to a reference to bytes (zero-cost conversion)
-    pub fn as_bytes(&self) -> &[u8] {
-        IntoBytes::as_bytes(self)
+    pub const fn kind(&self) -> &RequestKind {
+        &self.kind
     }
 
-    /// Reads and returns the actual Request inside the RawRequest
-    pub fn into_request(self) -> Request {
-        let bytes = &self.data[..self.kind.size()];
-
-        match self.kind {
-            RequestKind::CreateWindow => {
-                Request::CreateWindow(match FromBytes::read_from_bytes(&bytes) {
-                    Ok(k) => k,
-                    Err(_) => unreachable!(),
-                })
-            }
-            RequestKind::DamageWindow => {
-                Request::DamageWindow(match FromBytes::read_from_bytes(&bytes) {
-                    Ok(k) => k,
-                    Err(_) => unreachable!(),
-                })
-            }
-            RequestKind::Ping => Request::Ping(Ping),
-        }
+    /// Encodes the Request into a byte array and returns the length of the encoded data.
+    pub fn encode(self) -> ([u8; MAX_PACKET_SIZE], usize) {
+        let mut dst = [0u8; MAX_PACKET_SIZE];
+        let len = bincode::encode_into_slice(self, &mut dst, BINCODE_CONFIG)
+            .expect("Encoding a Request should never fail");
+        (dst, len)
     }
 
-    /// Parses and reads given bytes into a RawRequest
-    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, RequestParseErr> {
-        if bytes.len() < size_of::<Self>() {
-            return Err(RequestParseErr::InvalidPacketSize);
-        }
-
-        let request_bytes = &bytes[..size_of::<Self>()];
-
-        let header_off = offset_of!(Self, header);
-        let kind_off = offset_of!(Self, kind);
-        let data_off = offset_of!(Self, data);
-
-        let header_bytes = &request_bytes[header_off..header_off + size_of::<RequestHeader>()];
-        let kind_bytes = &request_bytes[kind_off..kind_off + size_of::<RequestKind>()];
-        let data_bytes = &request_bytes[data_off..data_off + size_of::<RawRequestData>()];
-
-        let header: RequestHeader = match TryFromBytes::try_read_from_bytes(header_bytes) {
-            Ok(h) => h,
-            Err(ConvertError::Validity(_)) => return Err(RequestParseErr::InvalidMagic),
-            Err(ConvertError::Size(_)) => unreachable!(),
-        };
-
-        let kind: RequestKind = match TryFromBytes::try_read_from_bytes(kind_bytes) {
-            Ok(h) => h,
-            Err(ConvertError::Validity(_)) => return Err(RequestParseErr::InvalidRequestKind),
-            Err(ConvertError::Size(_)) => unreachable!(),
-        };
-
-        Ok(Self {
-            header,
-            kind,
-            data: data_bytes.try_into().unwrap(), /* Size was checked at some point */
-        })
+    /// Decodes a byte array into a Request.
+    pub fn decode(data: &[u8]) -> Result<Self, PacketParseErr> {
+        Ok((bincode::decode_from_slice(data, BINCODE_CONFIG)?).0)
     }
 }

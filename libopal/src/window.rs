@@ -2,8 +2,8 @@ use std::ptr::NonNull;
 
 use opal_abi::{
     com::{
-        request::{CreateWindow, DamageWindow, Request},
-        response::OkResponse,
+        request::{CreateWindow, DamageWindow, RequestKind},
+        response::{OkResponse, Response},
     },
     fb::Pixel,
 };
@@ -72,24 +72,26 @@ impl Window {
 
     /// Request the creation of a new window from the WM.
     pub fn create(x: u32, y: u32, width: u32, height: u32) -> Self {
-        let resp = send_request(Request::CreateWindow(CreateWindow::new(
+        let resp = send_request(RequestKind::CreateWindow(CreateWindow::new(
             0, width, height, x, y,
         )))
         .expect("Failed to send Create Window Request");
 
-        let OkResponse::WindowCreated(window) = resp.expect("Create Window request failed") else {
-            unreachable!()
+        let window = match resp {
+            Response::Ok(OkResponse::WindowCreated(w)) => w,
+            Response::Err(e) => panic!("Failed to create window: {:?}", e),
+            _ => panic!("Unexpected response, {:#?}", resp),
         };
 
         let id = window.window_id();
         let mut window = Self::new_inner(id, window.shm_key(), width, height);
         window.pixels_mut().fill(Pixel::from_rgba(0, 0, 0, 0x80));
 
-        send_request(Request::DamageWindow(DamageWindow::new(
+        let results = send_request(RequestKind::DamageWindow(DamageWindow::new(
             id, 0, 0, width, height,
         )))
-        .expect("Failed to send clear window request")
-        .expect("Failed to clear window");
+        .expect("Failed to send clear window request");
+        assert!(matches!(results, Response::Ok(_)), "Failed to clear window");
         window
     }
 }

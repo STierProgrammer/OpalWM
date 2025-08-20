@@ -1,9 +1,9 @@
 use std::io::{self, Read, Write};
 
 use opal_abi::com::{
-    MAX_PACKET_SIZE,
-    request::{RawRequest, Request, RequestParseErr},
-    response::{RawResponse, Response},
+    packet::{MAX_PACKET_SIZE, PacketParseErr},
+    request::Request,
+    response::Response,
 };
 use safa_api::sockets::UnixSockConnection;
 use thiserror::Error;
@@ -20,7 +20,7 @@ pub struct ClientComPipe(UnixSockConnection);
 #[derive(Error, Debug)]
 pub enum ReadError {
     #[error("Failed to parse Client's Request {0}")]
-    ParseErr(#[from] RequestParseErr),
+    ParseErr(#[from] PacketParseErr),
     #[error("Error while reading from a socket: {0}")]
     IOError(#[from] io::Error),
 }
@@ -35,14 +35,14 @@ impl ClientComPipe {
         let mut buf = [0u8; MAX_PACKET_SIZE];
         let len = self.read(&mut buf)?;
         let request = &buf[..len];
-        Ok(RawRequest::try_from_bytes(request)?.into_request())
+        Ok(Request::decode(request)?)
     }
 
     /// Writes 1 Response to the client's last request
     pub fn write_response(&mut self, response: Response) -> io::Result<()> {
-        let raw: RawResponse = response.into();
+        let (bytes, len) = response.encode();
+        let bytes = &bytes[..len];
 
-        let bytes = raw.into_bytes();
         let len = self.write(bytes)?;
         debug_assert_eq!(len, bytes.len());
         Ok(())
