@@ -7,6 +7,9 @@ use crate::com::{
 /// Possible response errors.
 pub mod error;
 
+/// The layout of the events the WM can send to the client, an event is a kind of [response](self)
+pub mod event;
+
 #[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 /// Response of [`super::request::CreateWindow`]
@@ -51,6 +54,7 @@ pub enum OkResponse {
 pub enum Response {
     Ok(OkResponse) = 0xA1E_F00D_D,
     Err(ResponseError) = 0xBAD_F00D_D,
+    Event(event::Event) = 0x100_F00D_D,
 }
 
 impl Response {
