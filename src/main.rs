@@ -38,6 +38,14 @@ fn main() {
             Window::new_filled_with(270, 400, 200, 200, Pixel::from_rgba(0xFF, 0, 0, 0xFF / 2)),
             WindowKind::Normal,
         );
+        w.add_window(
+            Window::new_from_bmp(
+                300,
+                400,
+                BMPImage::from_slice(include_bytes!("../tayoky.bmp")).unwrap(),
+            ),
+            WindowKind::Normal,
+        );
     }
     std::thread::spawn(main_loop);
     listener::listen()

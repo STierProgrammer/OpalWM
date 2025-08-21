@@ -16,7 +16,7 @@ pub mod listener;
 
 /// A lock guard for the Sender part of the [`ClientComPipe`]
 pub struct ClientComSender<'a> {
-    lock_guard: MutexGuard<'a, ()>,
+    _guard: MutexGuard<'a, ()>,
     pipe: &'a ClientComPipe,
 }
 
@@ -34,7 +34,7 @@ impl ClientComSender<'_> {
 
 /// A lock guard for the Receiver part of the [`ClientComPipe`].
 pub struct ClientComReceiver<'a> {
-    lock_guard: MutexGuard<'a, ()>,
+    _guard: MutexGuard<'a, ()>,
     pipe: &'a ClientComPipe,
 }
 
@@ -79,7 +79,7 @@ impl ClientComPipe {
     /// Acquires lock on a sender that can be used to send responses to the client.
     pub fn sender<'a>(&'a self) -> ClientComSender<'a> {
         ClientComSender {
-            lock_guard: self
+            _guard: self
                 .sender_lock
                 .lock()
                 .expect("Failed to acquire lock on the sending side of a communication pipe"),
@@ -90,7 +90,7 @@ impl ClientComPipe {
     /// Acquires lock on a receiver that can be used to receive requests from the client.
     pub fn receiver<'a>(&'a self) -> ClientComReceiver<'a> {
         ClientComReceiver {
-            lock_guard: self
+            _guard: self
                 .receiver_lock
                 .lock()
                 .expect("Failed to acquire lock on the receiving side of a communication pipe"),

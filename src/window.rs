@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     iter::Sum,
     ops::Add,
     ptr::NonNull,
@@ -10,6 +11,7 @@ use std::{
 };
 
 use indexmap::IndexSet;
+use opal_abi::com::response::{Response, event::Event};
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use safa_api::abi::mem::{MemMapFlags, ShmFlags};
 
@@ -17,7 +19,7 @@ use crate::{
     REALLY_VERBOSE,
     bmp::BMPImage,
     com::ClientComPipe,
-    dlog,
+    dlog, elog,
     framebuffer::{self, BG_PIXEL, FB_INFO, Framebuffer, Pixel},
 };
 
@@ -62,6 +64,19 @@ impl Window {
     /// A shared memory key that lives as long as the window itself, and can be used to access the window's pixels.
     pub const fn shm_key(&self) -> &usize {
         &self.shm_key
+    }
+
+    /// Sends an event to the client that owns this window.
+    pub fn send_event(&self, event: Event) {
+        if let Some(com_pipe) = &self.com_pipe {
+            if let Err(err) = com_pipe.sender().send_response(Response::Event(event))
+                && err.kind() != ErrorKind::ConnectionAborted
+                && err.kind() != ErrorKind::ConnectionReset
+            {
+                // TODO: Maybe this is fatal?
+                elog!("Failed to send an event {event:#?} to the client err: {err:?}, ignoring...")
+            }
+        }
     }
 
     fn allocate_pixel_buffer(
@@ -350,6 +365,7 @@ impl Windows {
         }
     }
 
+    #[inline]
     fn insert_damage(&mut self, regions: &[DamageRegion]) {
         // Faster than extend_from_slice for some reason (I checked the code they aren't reserving the additional elements)
         self.damaged_regions.reserve(regions.len());
@@ -516,6 +532,48 @@ impl Windows {
         Some(id)
     }
 
+    /// Set the window with the id `win_id` as focused,
+    /// handles everything including sending events and damage, and reordering the Z-list.
+    fn set_focused(&mut self, win_id: WinID) -> bool {
+        let Some((window, window_kind)) = self.windows.get(&win_id) else {
+            return false;
+        };
+
+        let old_value = self.focused_window.replace(win_id);
+        window.send_event(Event::WindowFocused);
+        let damage0 = window.damage();
+
+        if let Some(old_id) = old_value
+            && let Some((win, _)) = self.windows.get(&old_id)
+        {
+            win.send_event(Event::WindowUnfocused);
+        }
+
+        match window_kind {
+            WindowKind::Normal => {
+                self.normal_windows.shift_remove(&win_id);
+                self.normal_windows.insert(win_id);
+            }
+            WindowKind::Overlay => {
+                self.normal_windows.shift_remove(&win_id);
+                self.overlay_windows.insert(win_id);
+            }
+        };
+
+        self.insert_damage(&[damage0]);
+        true
+    }
+
+    /// Unfocus the currently focused window.
+    fn unfocus_current(&mut self) {
+        if let Some(win_id) = self.focused_window.take() {
+            if let Some((win, _)) = self.windows.get(&win_id) {
+                win.send_event(Event::WindowUnfocused);
+                self.insert_damage(&[win.damage()]);
+            }
+        }
+    }
+
     /// Makes the top most [`WindowKind::Normal`] Window that contacts,
     /// with the region at the position `pos_x`, `pos_y` with the width `width`
     /// and the height `height`, focused, returns the Window ID, or None if there are no normal windows in contact,
@@ -534,24 +592,25 @@ impl Windows {
             height,
         };
 
-        let results = self.normal_windows.iter().rev().find_map(|win_id| {
-            let (win, _) = self
-                .windows
-                .get(win_id)
-                .expect("Window wasn't removed from the Z-ordering when it's ID was deallocated");
-            let overlaps = region.overlaps_with(win).is_some();
-            overlaps.then_some((*win_id, win.damage()))
-        });
+        let results = self
+            .normal_windows
+            .iter()
+            .rev()
+            .find(|win_id| {
+                let (win, _) = self.windows.get(win_id).expect(
+                    "Window wasn't removed from the Z-ordering when it's ID was deallocated",
+                );
+                let overlaps = region.overlaps_with(win).is_some();
+                overlaps
+            })
+            .copied();
 
-        if let Some((win_id, damage)) = results {
-            self.normal_windows.shift_remove(&win_id);
-            self.normal_windows.insert(win_id);
-            self.focused_window = Some(win_id);
-            self.insert_damage(&[damage]);
+        if let Some(win_id) = results {
+            self.set_focused(win_id);
         } else {
-            self.focused_window = None;
+            self.unfocus_current();
         }
-        results.map(|(id, _)| id)
+        results
     }
 
     /// Returns the ID of the focused Window
@@ -616,6 +675,7 @@ impl Windows {
             self.remove_id(win_id),
             "Unexpected behavior, ID should have been removed successfully"
         );
+        dlog!("Window removed");
         Ok(())
     }
 }

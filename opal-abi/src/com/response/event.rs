@@ -138,4 +138,5 @@ pub enum Event {
     MouseLeave(MouseLeaveEvent),
     MouseEnter(MouseEnterEvent),
     WindowFocused,
+    WindowUnfocused,
 }
