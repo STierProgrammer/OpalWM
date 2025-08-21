@@ -605,6 +605,13 @@ impl Windows {
             })
             .copied();
 
+        if let Some(win_id) = results
+            && let Some(focused_id) = self.focused_window
+            && win_id == focused_id
+        {
+            return Some(win_id); // Already focused
+        }
+
         if let Some(win_id) = results {
             self.set_focused(win_id);
         } else {
