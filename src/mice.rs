@@ -82,20 +82,19 @@ impl MiceCursor {
 
                 // dlog!("event {event:#?}");
 
+                let left_button_is_pressed = event.buttons_status.contains(MiceBtnStatus::BTN_LEFT);
                 if self.left_button_was_pressed
                     && let Some(focused_id) = windows.focused_window()
+                    && left_button_is_pressed
                 {
                     windows.add_cord(focused_id, x_change, y_change);
                 }
 
-                if event.buttons_status.contains(MiceBtnStatus::BTN_LEFT)
-                    && !self.left_button_was_pressed
-                {
+                if left_button_is_pressed && !self.left_button_was_pressed {
                     windows.focus_window_in_contact(self.x, self.y, self.width, self.height);
                 }
 
-                self.left_button_was_pressed =
-                    event.buttons_status.contains(MiceBtnStatus::BTN_LEFT);
+                self.left_button_was_pressed = left_button_is_pressed;
             }
             MouseEventKind::Null => unreachable!(),
         }
