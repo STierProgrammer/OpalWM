@@ -230,7 +230,7 @@ impl Window {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IntersectionPoint {
+pub struct IntersectionPoint {
     top_left_within: (usize, usize),
     bottom_right_within: (usize, usize),
 }
@@ -253,6 +253,18 @@ impl IntersectionPoint {
         let (_, top_y) = self.top_left_within;
         let (_, bott_y) = self.bottom_right_within;
         bott_y - top_y
+    }
+
+    /// Returns the x-coordinate of the intersection point, from the top-left corner.
+    pub const fn x(&self) -> usize {
+        let (top_x, _) = self.top_left_within;
+        top_x
+    }
+
+    /// Returns the y-coordinate of the intersection point, from the top-left corner.
+    pub const fn y(&self) -> usize {
+        let (_, top_y) = self.top_left_within;
+        top_y
     }
 }
 
@@ -524,17 +536,19 @@ impl Windows {
         self.windows.insert(id, (window, kind));
 
         match kind {
-            WindowKind::Normal => self.normal_windows.insert(id),
-            WindowKind::Overlay => self.overlay_windows.insert(id),
+            WindowKind::Normal => self.set_focused(id),
+            WindowKind::Overlay => {
+                self.insert_damage(&[damage]);
+                self.overlay_windows.insert(id)
+            }
         };
 
-        self.insert_damage(&[damage]);
         Some(id)
     }
 
     /// Set the window with the id `win_id` as focused,
     /// handles everything including sending events and damage, and reordering the Z-list.
-    fn set_focused(&mut self, win_id: WinID) -> bool {
+    pub fn set_focused(&mut self, win_id: WinID) -> bool {
         let Some((window, window_kind)) = self.windows.get(&win_id) else {
             return false;
         };
@@ -565,7 +579,7 @@ impl Windows {
     }
 
     /// Unfocus the currently focused window.
-    fn unfocus_current(&mut self) {
+    pub fn unfocus_current(&mut self) {
         if let Some(win_id) = self.focused_window.take() {
             if let Some((win, _)) = self.windows.get(&win_id) {
                 win.send_event(Event::WindowUnfocused);
@@ -574,17 +588,14 @@ impl Windows {
         }
     }
 
-    /// Makes the top most [`WindowKind::Normal`] Window that contacts,
-    /// with the region at the position `pos_x`, `pos_y` with the width `width`
-    /// and the height `height`, focused, returns the Window ID, or None if there are no normal windows in contact,
-    /// If there are no normal windows on contact, a [`Self::focused_window`] call will return None after this.
-    pub fn focus_window_in_contact(
-        &mut self,
+    /// Returns the ID of the top-most window that is in contact with the given position and size if any.
+    pub fn window_in_contact(
+        &self,
         pos_x: usize,
         pos_y: usize,
         width: usize,
         height: usize,
-    ) -> Option<WinID> {
+    ) -> Option<(WinID, IntersectionPoint)> {
         let region = DamageRegion {
             pos_x,
             pos_y,
@@ -592,32 +603,13 @@ impl Windows {
             height,
         };
 
-        let results = self
-            .normal_windows
-            .iter()
-            .rev()
-            .find(|win_id| {
-                let (win, _) = self.windows.get(win_id).expect(
-                    "Window wasn't removed from the Z-ordering when it's ID was deallocated",
-                );
-                let overlaps = region.overlaps_with(win).is_some();
-                overlaps
-            })
-            .copied();
-
-        if let Some(win_id) = results
-            && let Some(focused_id) = self.focused_window
-            && win_id == focused_id
-        {
-            return Some(win_id); // Already focused
-        }
-
-        if let Some(win_id) = results {
-            self.set_focused(win_id);
-        } else {
-            self.unfocus_current();
-        }
-        results
+        self.normal_windows.iter().rev().find_map(|win_id| {
+            let (win, _) = self
+                .windows
+                .get(win_id)
+                .expect("Window wasn't removed from the Z-ordering when it's ID was deallocated");
+            region.overlaps_with(win).map(|point| (*win_id, point))
+        })
     }
 
     /// Returns the ID of the focused Window
@@ -649,6 +641,12 @@ impl Windows {
             width,
             height,
         }]);
+        Ok(())
+    }
+
+    pub fn send_event(&mut self, win_id: WinID, event: Event) -> Result<(), ()> {
+        let (win, _) = self.windows.get_mut(&win_id).ok_or(())?;
+        win.send_event(event);
         Ok(())
     }
 
