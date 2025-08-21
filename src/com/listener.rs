@@ -1,6 +1,7 @@
 use std::{
     io::ErrorKind,
     process::{Command, Stdio},
+    sync::Arc,
 };
 
 use opal_abi::com::{
@@ -14,7 +15,8 @@ use crate::{
     dlog, elog,
     framebuffer::Pixel,
     log, logging,
-    window::{self, Window, WindowKind},
+    window::{self, WINDOWS, Window, WindowKind},
+    wlog,
 };
 
 fn spawn_hello() {
@@ -28,12 +30,17 @@ fn spawn_hello() {
 
 fn handle_connect(connection: UnixSockConnection) {
     dlog!("Handling a new connection");
-    let mut pipe = ClientComPipe::new(connection);
+
+    let mut window_ids = Vec::with_capacity(1);
+
+    let pipe = Arc::new(ClientComPipe::new(connection));
+    // No one else is going to be receiving requests and therefore we can take ownership of the receiver
+    let mut receiver = pipe.receiver();
 
     loop {
         dlog!("Waiting for a Request");
 
-        let response = match pipe.read_request() {
+        let response = match receiver.receive_request() {
             Ok(req) => match req.kind() {
                 RequestKind::CreateWindow(request) => {
                     let height = request.height() as usize;
@@ -47,12 +54,14 @@ fn handle_connect(connection: UnixSockConnection) {
                         width,
                         height,
                         Pixel::from_rgba(0, 0, 0, 0xFF),
-                    );
+                    )
+                    .with_com_pipe(pipe.clone());
 
                     let shm_key = *window.shm_key();
                     window::add_window(window, WindowKind::Normal)
                         .map(|id| {
                             dlog!("Added Window {id}, with the SHM Key {shm_key} for a client");
+                            window_ids.push(id);
                             CreateWindowResp::new(id, shm_key)
                         })
                         .map(OkResponse::WindowCreated)
@@ -88,9 +97,21 @@ fn handle_connect(connection: UnixSockConnection) {
         };
 
         dlog!("Writing a Response");
-        if let Err(e) = pipe.write_response(response) {
+        if let Err(e) = pipe.sender().send_response(response) {
             elog!("Error writing to socket '{e}', disconnecting...");
             break;
+        }
+    }
+
+    // cleanup windows
+    {
+        let mut windows = WINDOWS
+            .lock()
+            .expect("Failed to acquire lock on Windows when cleaning up after disconnecting");
+        for id in window_ids {
+            if let Err(()) = windows.remove_window(id) {
+                wlog!("Failed to remove window {id}");
+            }
         }
     }
 }

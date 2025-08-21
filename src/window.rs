@@ -4,7 +4,7 @@ use std::{
     ops::Add,
     ptr::NonNull,
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -16,6 +16,7 @@ use safa_api::abi::mem::{MemMapFlags, ShmFlags};
 use crate::{
     REALLY_VERBOSE,
     bmp::BMPImage,
+    com::ClientComPipe,
     dlog,
     framebuffer::{self, BG_PIXEL, FB_INFO, Framebuffer, Pixel},
 };
@@ -36,6 +37,7 @@ pub struct Window {
     shm_ri: usize,
     // TODO: Implement a good memory map or a resource wrapper to drop this automatically.
     mmap_ri: usize,
+    com_pipe: Option<Arc<ClientComPipe>>,
 }
 
 impl Drop for Window {
@@ -51,6 +53,12 @@ unsafe impl Send for Window {}
 unsafe impl Sync for Window {}
 
 impl Window {
+    /// Returns a new instance of the Window with the given command pipe to send events to.
+    pub fn with_com_pipe(mut self, com_pipe: Arc<ClientComPipe>) -> Self {
+        self.com_pipe = Some(com_pipe);
+        self
+    }
+
     /// A shared memory key that lives as long as the window itself, and can be used to access the window's pixels.
     pub const fn shm_key(&self) -> &usize {
         &self.shm_key
@@ -124,6 +132,7 @@ impl Window {
             shm_key,
             shm_ri,
             mmap_ri,
+            com_pipe: None,
         }
     }
 
@@ -146,6 +155,7 @@ impl Window {
             shm_ri,
             mmap_ri,
             shm_key,
+            com_pipe: None,
         }
     }
 
@@ -378,7 +388,7 @@ impl Windows {
 
         let byte = &mut self.window_ids[row];
         let bit = ((*byte >> col) & 1) == 1;
-        let will_succeed = !bit;
+        let will_succeed = bit;
 
         if will_succeed {
             *byte &= !(1 << col);
@@ -573,6 +583,39 @@ impl Windows {
             width,
             height,
         }]);
+        Ok(())
+    }
+
+    /// Completely removes a window from the window manager.
+    pub fn remove_window(&mut self, win_id: WinID) -> Result<(), ()> {
+        if let Some(focused_id) = self.focused_window
+            && focused_id == win_id
+        {
+            self.focused_window = None;
+        }
+
+        let (window, window_kind) = self.windows.remove(&win_id).ok_or(())?;
+        self.insert_damage(&[window.damage()]);
+
+        match window_kind {
+            WindowKind::Normal => {
+                assert!(
+                    self.normal_windows.shift_remove(&win_id),
+                    "Window has not placed in the normal Z-ordering"
+                );
+            }
+            WindowKind::Overlay => {
+                assert!(
+                    self.overlay_windows.shift_remove(&win_id),
+                    "Window has not placed in the overlay Z-ordering"
+                );
+            }
+        }
+
+        assert!(
+            self.remove_id(win_id),
+            "Unexpected behavior, ID should have been removed successfully"
+        );
         Ok(())
     }
 }

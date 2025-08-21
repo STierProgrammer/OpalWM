@@ -77,3 +77,10 @@ macro_rules! dlog {
 macro_rules! elog {
     ($($arg: tt)*) => ($crate::generic_log!("[  \x1b[31mError\x1b[0m  ]\x1b[90m:\x1b[0m {}", format_args!($($arg)*)));
 }
+
+#[macro_export]
+macro_rules! wlog {
+    ($($arg: tt)*) => {
+        $crate::generic_log!("[  \x1b[33mWarn\x1b[0m   ]\x1b[90m:\x1b[0m {}", format_args!($($arg)*));
+    };
+}

@@ -1,4 +1,8 @@
-use std::io::{self, Read, Write};
+use std::{
+    cell::UnsafeCell,
+    io::{self, Read, Write},
+    sync::{Mutex, MutexGuard},
+};
 
 use opal_abi::com::{
     packet::{MAX_PACKET_SIZE, PacketParseErr},
@@ -10,11 +14,49 @@ use thiserror::Error;
 
 pub mod listener;
 
-/// A Wrapper over a bi-directonal communication pipe, that can send data to and from the client
+/// A lock guard for the Sender part of the [`ClientComPipe`]
+pub struct ClientComSender<'a> {
+    lock_guard: MutexGuard<'a, ()>,
+    pipe: &'a ClientComPipe,
+}
+
+impl ClientComSender<'_> {
+    /// Sends a response to the client, blocks until the response is sent.
+    pub fn send_response(&mut self, response: Response) -> Result<(), io::Error> {
+        let (bytes, len) = response.encode();
+        let bytes = &bytes[..len];
+
+        let len = self.write(bytes)?;
+        debug_assert_eq!(len, bytes.len());
+        Ok(())
+    }
+}
+
+/// A lock guard for the Receiver part of the [`ClientComPipe`].
+pub struct ClientComReceiver<'a> {
+    lock_guard: MutexGuard<'a, ()>,
+    pipe: &'a ClientComPipe,
+}
+
+impl ClientComReceiver<'_> {
+    /// Receives a request from the client, blocks until the request is received.
+    pub fn receive_request(&mut self) -> Result<Request, ReadError> {
+        let mut buf = [0u8; MAX_PACKET_SIZE];
+        let len = self.read(&mut buf)?;
+        let request = &buf[..len];
+        Ok(Request::decode(request)?)
+    }
+}
+
+/// A Wrapper over a bi-directonal communication pipe, that can send data to and from the client.
 ///
-/// This pipe works with the assumption that a single writer which is also a reader will happen to use it,
-/// And therefore isn't wrapped in any locks
-pub struct ClientComPipe(UnixSockConnection);
+/// This structure allows you to separate read and write operations on the client giving different locks for send and receive operations,
+/// obviously this means that there is no guarantee that the client will receive the response in the same order as the request was sent, but allows to send events to the client.
+pub struct ClientComPipe {
+    sender_lock: Mutex<()>,
+    receiver_lock: Mutex<()>,
+    connection: UnsafeCell<UnixSockConnection>,
+}
 
 /// An Error that happened during reading a request from a Client
 #[derive(Error, Debug)]
@@ -27,39 +69,47 @@ pub enum ReadError {
 
 impl ClientComPipe {
     pub const fn new(inner: UnixSockConnection) -> Self {
-        Self(inner)
+        Self {
+            sender_lock: Mutex::new(()),
+            receiver_lock: Mutex::new(()),
+            connection: UnsafeCell::new(inner),
+        }
     }
 
-    /// Reads 1 Request from the Client
-    pub fn read_request(&mut self) -> Result<Request, ReadError> {
-        let mut buf = [0u8; MAX_PACKET_SIZE];
-        let len = self.read(&mut buf)?;
-        let request = &buf[..len];
-        Ok(Request::decode(request)?)
+    /// Acquires lock on a sender that can be used to send responses to the client.
+    pub fn sender<'a>(&'a self) -> ClientComSender<'a> {
+        ClientComSender {
+            lock_guard: self
+                .sender_lock
+                .lock()
+                .expect("Failed to acquire lock on the sending side of a communication pipe"),
+            pipe: self,
+        }
     }
 
-    /// Writes 1 Response to the client's last request
-    pub fn write_response(&mut self, response: Response) -> io::Result<()> {
-        let (bytes, len) = response.encode();
-        let bytes = &bytes[..len];
-
-        let len = self.write(bytes)?;
-        debug_assert_eq!(len, bytes.len());
-        Ok(())
+    /// Acquires lock on a receiver that can be used to receive requests from the client.
+    pub fn receiver<'a>(&'a self) -> ClientComReceiver<'a> {
+        ClientComReceiver {
+            lock_guard: self
+                .receiver_lock
+                .lock()
+                .expect("Failed to acquire lock on the receiving side of a communication pipe"),
+            pipe: self,
+        }
     }
 }
 
-impl<'a> Read for ClientComPipe {
+impl<'a> Read for ClientComReceiver<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        Read::read(&mut self.0, buf)
+        unsafe { Read::read(&mut *self.pipe.connection.get(), buf) }
     }
 }
 
-impl<'a> Write for ClientComPipe {
+impl<'a> Write for ClientComSender<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Write::write(&mut self.0, buf)
+        unsafe { Write::write(&mut *self.pipe.connection.get(), buf) }
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
+        unsafe { &mut *self.pipe.connection.get() }.flush()
     }
 }
