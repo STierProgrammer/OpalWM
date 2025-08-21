@@ -33,6 +33,30 @@ unsafe impl Send for Window {}
 unsafe impl Sync for Window {}
 
 impl Window {
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Redraws the window's pixels as a rectangle starting at (from_x, from_y) with the given width and height.
+    pub fn redraw(&self, from_x: u32, from_y: u32, width: u32, height: u32) {
+        assert_eq!(
+            send_request(RequestKind::DamageWindow(DamageWindow::new(
+                self.win_id,
+                from_x,
+                from_y,
+                width,
+                height,
+            )))
+            .expect("Failed to send Damage Window request"),
+            Response::Ok(OkResponse::Success),
+            "Damage Window request returned an unexpected response"
+        );
+    }
+
     /// Returns a mutable reference to the window's pixels.
     pub const fn pixels_mut(&mut self) -> &mut [Pixel] {
         unsafe { self.pixels.as_mut() }
