@@ -52,10 +52,10 @@ impl Pixel {
         let src_alpha = self.alpha as u16;
         let target_alpha = other.alpha as u16;
 
-        let red = (src_red * src_alpha + (target_red * target_alpha * (255 - src_alpha))) / 255;
-        let green = (src_green * src_alpha + (target_green * target_alpha * (255 - src_alpha))) / 255;
-        let blue = (src_blue * src_alpha + (target_blue * target_alpha * (255 - src_alpha))) / 255;
-        let alpha = 255 - ((255 - src_alpha) * (255 - target_alpha)) / 255;
+        let red = (src_red * src_alpha + target_red * target_alpha * (255 - src_alpha)) / 255;
+        let green = (src_green * src_alpha + target_green * target_alpha * (255 - src_alpha)) / 255;
+        let blue = (src_blue * src_alpha + target_blue * target_alpha * (255 - src_alpha)) / 255;
+        let alpha = src_alpha + target_alpha - (src_alpha * target_alpha) / 255;
 
         Pixel {
             red: red as u8,
