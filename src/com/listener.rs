@@ -20,12 +20,14 @@ use crate::{
 };
 
 fn spawn_hello() {
-    Command::new("sys:/bin/hello_world")
+    if let Err(err) = Command::new("sys:/bin/hello_world")
         .stdout(Stdio::from(logging::console_clone()))
         .stderr(Stdio::from(logging::console_clone()))
         .stdin(Stdio::from(logging::console_clone()))
         .spawn()
-        .expect("Failed to spawn test Process");
+    {
+        elog!("Failed to spawn hello_world process: {}", err);
+    }
 }
 
 fn handle_connect(connection: UnixSockConnection) {
