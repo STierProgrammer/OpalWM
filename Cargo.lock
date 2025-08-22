@@ -51,6 +51,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libgem"
+version = "0.1.0"
+dependencies = [
+ "libopal",
+]
+
+[[package]]
 name = "libopal"
 version = "0.1.0"
 dependencies = [
