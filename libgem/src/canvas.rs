@@ -33,7 +33,7 @@ pub trait DrawingCanvas {
     /// Draw a circle, starting at (x, y) which is the top-left corner of the circle,
     /// and ending at (x + radius*2, y + radius*2).
     #[inline]
-    fn draw_circle(&mut self, x: u32, y: u32, radius: u32, border_color: Pixel, fill_color: Pixel) {
+    fn draw_circle(&mut self, x: u32, y: u32, radius: u32, border_color: Pixel) {
         let x = x + (radius * 2);
         let y = y + (radius * 2);
 
@@ -70,18 +70,20 @@ pub trait DrawingCanvas {
         }
     }
 
-    /// Draws a rounded rectangle on the canvas with the given border color and fills with the given fill_color
-    fn draw_round_rect(
+    /// Draws a rounded rectangle on the canvas with the given border color and fills with the given fill color got by calling get_color(false, line_num),
+    /// the border color got by calling get_color(true, line_num)
+    ///
+    /// as get_color(is_border: bool, line_num: u32) -> Pixel
+    fn draw_round_rect<F: Fn(bool, u32) -> Pixel>(
         &mut self,
-        x: u32,
-        y: u32,
+        start_x: u32,
+        start_y: u32,
         width: u32,
         height: u32,
         radius: u32,
-        border_color: Pixel,
-        fill_color: Pixel,
+        get_color: F,
     ) {
-        // Draws two corners of a rounded rectangle, and then connects them with a line of fill_color
+        // Draws two corners of a rounded rectangle, and then connects them with a line of a color got by the function get_color
         let mut draw_2corners = |x0: u32, x1: u32, y: u32, top: bool| {
             let x0 = x0 + (radius * 2);
             let x1 = x1 + (radius * 2);
@@ -109,84 +111,81 @@ pub trait DrawingCanvas {
                 ddf_x += 2;
                 f += ddf_x;
 
-                match top {
-                    // TODO: shit & broken make better
-                    false => {
-                        // Bottom Left corner
-                        self.draw_pixel(x0 - xx - radius, y + yy - radius, border_color);
-                        self.draw_pixel(x0 - yy - radius, y + xx - radius, border_color);
+                let draw_y = if !top {
+                    y + yy - radius
+                } else {
+                    y - yy - radius
+                };
+                let draw_y_flipped = if !top {
+                    y + xx - radius
+                } else {
+                    y - xx - radius
+                };
 
-                        // Bottom Right corner
-                        self.draw_pixel(x1 + xx - radius, y + yy - radius, border_color);
-                        self.draw_pixel(x1 + yy - radius, y + xx - radius, border_color);
+                let draw_x0 = x0 - xx - radius;
+                let draw_x0_flipped = x0 - yy - radius;
 
-                        if yy != last_yy {
-                            // Connect from x0 to x1
-                            let line_x0 = x0 - xx - radius + 1;
-                            let line_y0 = y + yy - radius;
-                            let line_x1 = x1 + xx - radius - 1;
+                let draw_x1 = x1 + xx - radius;
+                let draw_x1_flipped = x1 + yy - radius;
 
-                            self.draw_line(line_x0, line_y0, line_x1, line_y0, fill_color);
-                        }
+                let y_line = draw_y - start_y;
+                let y_line_flipped = draw_y_flipped - start_y;
 
-                        if xx != last_xx {
-                            // Connect from x0 to x1 (rotated)
-                            let line_x0 = x0 - yy - radius + 1;
-                            let line_y0 = y + xx - radius;
-                            let line_x1 = x1 + yy - radius - 1;
+                let color = get_color(true, y_line);
+                let fill_color = get_color(false, y_line);
 
-                            self.draw_line(line_x0, line_y0, line_x1, line_y0, fill_color);
-                        }
-                    }
-                    true => {
-                        // Top Left corner
-                        self.draw_pixel(x0 - xx - radius, y - yy - radius, border_color);
-                        self.draw_pixel(x0 - yy - radius, y - xx - radius, border_color);
+                let flipped_color = get_color(true, y_line_flipped);
+                let fill_flipped_color = get_color(false, y_line_flipped);
 
-                        // Top Right corner
-                        self.draw_pixel(x1 + xx - radius, y - yy - radius, border_color);
-                        self.draw_pixel(x1 + yy - radius, y - xx - radius, border_color);
+                // Bottom or Top left corner
+                self.draw_pixel(draw_x0, draw_y, color);
+                self.draw_pixel(draw_x0_flipped, draw_y_flipped, flipped_color);
 
-                        // only if yy changed
-                        if yy != last_yy {
-                            // Connect from x0 to x1
-                            let line_x0 = x0 - xx - radius + 1;
-                            let line_y0 = y - yy - radius;
-                            let line_x1 = x1 + xx - radius - 1;
+                // Bottom or Top right corner
+                self.draw_pixel(draw_x1, draw_y, color);
+                self.draw_pixel(draw_x1_flipped, draw_y_flipped, flipped_color);
 
-                            self.draw_line(line_x0, line_y0, line_x1, line_y0, fill_color);
-                        }
-                        if xx != last_xx {
-                            // Connect from x0 to x1 (rotated)
-                            let line_x0 = x0 - yy - radius + 1;
-                            let line_y0 = y - xx - radius;
-                            let line_x1 = x1 + yy - radius - 1;
+                // Draw the fill
+                // not flipped
+                if yy != last_yy {
+                    self.draw_line(draw_x0 + 1, draw_y, draw_x1 - 1, draw_y, fill_color);
+                }
 
-                            self.draw_line(line_x0, line_y0, line_x1, line_y0, fill_color);
-                        }
-                    }
+                // flipped
+                if xx != last_xx {
+                    self.draw_line(
+                        draw_x0_flipped + 1,
+                        draw_y_flipped,
+                        draw_x1_flipped - 1,
+                        draw_y_flipped,
+                        fill_flipped_color,
+                    );
                 }
             }
         };
-        let x0 = x;
-        let y0 = y;
-        let x1 = (x + width) - 1;
-        let y1 = (y + height) - 1;
+        let x0 = start_x;
+        let y0 = start_y;
+        let x1 = (x0 + width) - 1;
+        let y1 = (y0 + height) - 1;
 
         draw_2corners(x0, x1 - (radius * 2), y0, true);
         draw_2corners(x0, x1 - (radius * 2), y1 - (radius * 2), false);
 
+        let border_top_color = get_color(true, 0);
+        let border_bottom_color = get_color(true, height);
+
         // Draws the border
         // Top line
-        self.draw_line(x0 + radius, y0, x1 - radius, y0, border_color);
+        self.draw_line(x0 + radius, y0, x1 - radius, y0, border_top_color);
         // Bottom line
-        self.draw_line(x0 + radius, y1, x1 - radius, y1, border_color);
+        self.draw_line(x0 + radius, y1, x1 - radius, y1, border_bottom_color);
         // Left line
-        self.draw_line(x0, y0 + radius, x0, y1 - radius, border_color);
+        self.draw_line(x0, y0 + radius, x0, y1 - radius, border_top_color);
         // Right line
-        self.draw_line(x1, y0 + radius, x1, y1 - radius, border_color);
+        self.draw_line(x1, y0 + radius, x1, y1 - radius, border_top_color);
 
         for y in (y0 + radius)..=(y1 - radius) {
+            let fill_color = get_color(false, y - start_y);
             self.draw_line(x0 + 1, y, x1 - 1, y, fill_color);
         }
     }

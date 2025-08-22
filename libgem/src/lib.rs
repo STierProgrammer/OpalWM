@@ -14,14 +14,16 @@ struct RootContainer {
 }
 
 impl RootContainer {
-    const CORNER_RADIUS: u32 = 25;
-    const BORDER_COLOR: Pixel = Pixel::from_rgba(0xFF, 00, 0x7F, 0xF0);
+    const CORNER_RADIUS: u32 = 8;
+    const BORDER_COLOR: Pixel = Pixel::from_rgba(0xFD, 0xB0, 0xC0, 0xFF);
+    const BG_COLOR: Pixel = Pixel::from_rgba(0, 0, 0, 0x80);
+    const TITLE_HEIGHT: u32 = 20;
 
     pub fn new(width: u32, height: u32) -> Self {
         let real_width = width + Self::CORNER_RADIUS;
-        let real_height = height + Self::CORNER_RADIUS;
+        let real_height = height + Self::TITLE_HEIGHT;
         let window_x = Self::CORNER_RADIUS / 2;
-        let window_y = Self::CORNER_RADIUS / 2;
+        let window_y = Self::TITLE_HEIGHT;
 
         let mut win = Window::create(0, 0, real_width, real_height);
 
@@ -31,8 +33,17 @@ impl RootContainer {
             real_width,
             real_height,
             Self::CORNER_RADIUS,
-            Self::BORDER_COLOR,
-            Pixel::from_rgba(0x0, 0x0, 0x0, 0x80),
+            |is_border, line_num| {
+                if is_border {
+                    Self::BORDER_COLOR
+                } else {
+                    if line_num < Self::TITLE_HEIGHT {
+                        Self::BORDER_COLOR
+                    } else {
+                        Self::BG_COLOR
+                    }
+                }
+            },
         );
 
         win.redraw(0, 0, real_width, real_height);
