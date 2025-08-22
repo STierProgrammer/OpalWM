@@ -1,11 +1,8 @@
 use std::ptr::NonNull;
 
-use opal_abi::{
-    com::{
-        request::{CreateWindow, DamageWindow, RequestKind},
-        response::{OkResponse, Response},
-    },
-    fb::Pixel,
+use opal_abi::com::{
+    request::{CreateWindow, DamageWindow, RequestKind},
+    response::{OkResponse, Response},
 };
 use safa_api::{
     abi::mem::{MemMapFlags, ShmFlags},
@@ -13,6 +10,7 @@ use safa_api::{
 };
 
 use crate::send_request;
+pub use opal_abi::fb::Pixel;
 
 pub struct Window {
     win_id: u16,
@@ -33,10 +31,12 @@ unsafe impl Send for Window {}
 unsafe impl Sync for Window {}
 
 impl Window {
+    #[inline]
     pub const fn height(&self) -> u32 {
         self.height
     }
 
+    #[inline]
     pub const fn width(&self) -> u32 {
         self.width
     }
@@ -57,6 +57,7 @@ impl Window {
         );
     }
 
+    #[inline(always)]
     /// Returns a mutable reference to the window's pixels.
     pub const fn pixels_mut(&mut self) -> &mut [Pixel] {
         unsafe { self.pixels.as_mut() }
@@ -109,7 +110,7 @@ impl Window {
 
         let id = window.window_id();
         let mut window = Self::new_inner(id, window.shm_key(), width, height);
-        window.pixels_mut().fill(Pixel::from_rgba(0, 0, 0, 0x80));
+        window.pixels_mut().fill(Pixel::from_rgba(0, 0, 0, 0x0));
 
         let results = send_request(RequestKind::DamageWindow(DamageWindow::new(
             id, 0, 0, width, height,
